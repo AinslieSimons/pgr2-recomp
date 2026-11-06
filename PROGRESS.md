@@ -37,6 +37,25 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - audio queue crash at guest address 4: ARM shows a command's pointer before its data
+
+The Metal crash of 01:00 (`EXC_BAD_ACCESS` at guest 4, `0x11D590` < `0x129C80` < `0x12C540` < `0x12E1A0`, thread `guest 34`) was not a null `[ecx+0x2A8]`:
+that would fault at guest 8, on `[edi+8]` in `0x12E680`. The fault is `movzx eax, word [esi+4]` at `0x12E69D` (report's line 993), with `esi` a null table
+slot. `0x12E1A0` is the audio manager's 50 Hz thread. `0x129C80` drains the manager's command ring (`[0x458964]+0x2BC`, 1024 dwords), and opcode 1 calls
+`[+0x2DC]`'s `0x11D590` (play sound id). `0x129BE0` writes the ring on the game thread with no lock and then moves the write pointer, which is safe on the
+console and under x86 store order, but not on ARM. Every id the game sends is 22 to 45 and no slot in those tables is null, but `0x12E680` does not reject ids below 22, which
+index before the table; the race table's id 5 slot holds 0.
+
+Evidence, Mac harness, Florence street race: one writer only (`guest 14`, no overlaps, about 500 commands a second). A thread spinning on the write pointer
+saw published dwords change afterwards, in the opcode slot too (`00000000 then 0000000D`): 98 torn dwords and 11 bad first opcodes in about 194,000 publishes over 6 runs of 330 s.
+Holding back a command's data for 40 ms after the publish crashed the reader on `guest 34` in `0x129C80` in 7 of 7 runs, with `0x11D590` seeing bad ids in 5 of them. Forcing opcode 1 with
+id 5 gave the report's fault exactly: guest 4 at `__imp__sub_0011D590+164`. Not shown: the crash occurring by itself. Those 6 plain runs did not crash,
+the reader polls far less often than the spinning thread, and the report does not hold the id, so the bad id that crashed it is inferred. Held-back runs faulted in `0x129C80`, not at guest 4.
+
+Fix: `src/game/audio_queue.cpp`. `0x129BE0` keeps commands in host memory under a mutex and `0x129C80` copies them into the ring on the audio thread, so only
+one thread touches the ring. Checked: Florence race 318 s with the fix, no crash or fatal lines, commands flowing; the final build, 198 s, the same. Not run: Metal, Windows, smoke.
+A crash this rare cannot be shown gone by running it. Other lock-free guest structures may have the same problem (MACOS.md, Known risks).
+
 ### 2026-11-06 - every streamed texture at full size
 `src/game/full_textures.cpp`, on by default (`full_textures`, a row in the Recomp menu, `PGR2_FULL_TEXTURES=0`): at the sync load 0x1078F0(0) each block with a stream part is read and inflated into guest memory at 0x40000000, past what the title allocates, and the swap and eviction are held off. No SDK change: renderers take such an address as it is.
 Metal, Chicago, 2 runs each way: main view binds showing the small version 26 to 27% off, 0% on; slow frames 0.9% and 0.3% on, 0.3% and 0.4% off; longest frame 698 ms in one on run, 133 to 158 ms in the others. Load 0.46 s for 1186 textures, 59 MB. Screenshots rendered correctly; poses differ between runs, so no same-pose picture comparison. Harness Florence and Chicago race: no fatal error. Windows untested. Correction: the 305 MB total was wrong, see FINDINGS.md: Chicago is 55 MB.
