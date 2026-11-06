@@ -2,9 +2,17 @@
 #include <atomic>
 #include <cstdlib>
 
+#include <cstring>
+#include <cstdio>
+#include <set>
+#include <vector>
+#include <string>
+
 #include "core/log.h"
 #include "gpu/state.h"
 #include "gpu/texture.h"
+#include "kernel/kernel.h"
+#include "kernel/memory.h"
 
 namespace pgr2 {
 extern bool dlc;  // src/common/game_info.cpp
@@ -50,7 +58,41 @@ void CarShadowNearer(const gpu::State& s, gpu::DrawAdjust& adjust) {
 constexpr uint32_t kErrorMagenta = 0x00FF00FF;
 bool g_skip_error_material = false;
 
+// PGR2_TRACE_SHADOW=1 (headless, drawing on the title's thread): the guest call chain of each kind of car shadow draw, once per
+// different chain, for finding the routines that draw them
+void TraceShadow(const gpu::State& s) {
+    gpu::TextureDesc t;
+    const bool have_tex = s.textures[0] && gpu::Describe(s.textures[0], t);
+    const bool multiply = s.simple[gpu::kMBlendEnable >> 2] && s.simple[gpu::kMSrcBlend >> 2] == 0 && s.simple[gpu::kMDestBlend >> 2] == 0x300;
+    const char* kind = nullptr;
+    if ((!s.rt.header || !s.rt.data) && s.zs.header) kind = "depth map";
+    else if (multiply && have_tex && gpu::Format(t.format).depth) kind = "mesh";
+    else if (multiply && have_tex && t.width == 128 && t.height == 128 && t.format == 1) kind = "blob";
+    if (!kind) return;
+    kernel::Thread* th = kernel::Current();
+    if (!th || !th->ctx) return;
+    X86Context& c = *th->ctx;
+    std::string chain = kind;
+    char num[16];
+    std::vector<uint32_t> found;
+    for (uint32_t i = 0; i < 160; i++) {
+        uint32_t a = c.esp + i * 4;
+        if (!mem::IsCommitted(a)) break;
+        uint32_t v = kernel::R32(a);
+        if (v >= 0x11000 && v < 0x275000) {
+            std::snprintf(num, sizeof num, " %X", v);
+            chain += num;
+        }
+    }
+    static std::set<std::string> seen;
+    static int per_kind[3] = {};
+    int& used = per_kind[kind[0] == 'd' ? 0 : kind[0] == 'm' ? 1 : 2];
+    if (used < 8 && seen.insert(chain).second && ++used) LOGR("shadow chain: %s esi %08X edi %08X ebx %08X ebp %08X", chain.c_str(), c.esi, c.edi, c.ebx, c.ebp);
+}
+bool g_trace_shadow = false;
+
 void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
+    if (g_trace_shadow) TraceShadow(s);
     if (g_skip_error_material && s.ps && s.simple[gpu::kMPsConstant0 >> 2] == kErrorMagenta) {
         static std::atomic<int> said{0};
         if (said++ < 4) LOGR("pgr2: a draw with PGR2's error material (magenta) left out, vertex shader %08X", s.vs_handle);
@@ -71,7 +113,9 @@ void InstallDrawFilter() {
     const char* nearer = std::getenv("PGR2_SHADOW_NEARER");
     bool shadow = nearer && *nearer == '1';
     g_skip_error_material = pgr2::dlc;
-    if (!shadow && !g_skip_error_material) return;  // the game's draws as they come
+    const char* trace = std::getenv("PGR2_TRACE_SHADOW");
+    g_trace_shadow = trace && *trace == '1';
+    if (!shadow && !g_skip_error_material && !g_trace_shadow) return;  // the game's draws as they come
     gpu::g_draw_filter = Filter;
     if (shadow) LOGR("pgr2: PGR2_SHADOW_NEARER=1, draw filter installed (car shadow pass nearer)");
     if (g_skip_error_material) LOGR("pgr2: DLC cities on, draws with PGR2's error material are left out");

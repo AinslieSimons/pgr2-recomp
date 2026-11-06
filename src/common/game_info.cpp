@@ -11,7 +11,7 @@
 void InstallDrawFilter();  // src/game/draw_filter.cpp
 
 namespace pgr2 {
-extern bool skip_intro, hide_hud, dlc;
+extern bool skip_intro, hide_hud, dlc, cpu_car_shadows;
 extern uint32_t fov_percent, draw_distance_percent;
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
@@ -40,7 +40,9 @@ constexpr void (*LoadOld)(const void*) = nullptr;
 
 // PGR2_SKIP_INTRO=1, PGR2_HIDE_HUD=1 and PGR2_FOV=percent set those options without a settings file (the headless harness has none)
 void Init() {
-    if (const char* e = std::getenv("PGR2_SKIP_INTRO"); e && *e == '1') pgr2::skip_intro = true;
+    // always: no intro movies at start, whatever the settings file says (PGR2_SKIP_INTRO=0: the pad scripts' timing has them)
+    const char* intro = std::getenv("PGR2_SKIP_INTRO");
+    pgr2::skip_intro = !(intro && *intro == '0');
     if (const char* e = std::getenv("PGR2_DLC"); e && *e == '1') pgr2::dlc = true;
     if (const char* e = std::getenv("PGR2_HIDE_HUD"); e && *e == '1') pgr2::hide_hud = true;
     if (const char* e = std::getenv("PGR2_FOV")) pgr2::fov_percent = uint32_t(std::atoi(e));
@@ -52,6 +54,7 @@ void Init() {
 
 namespace pgr2 {
 uint32_t race_fps = 30;  // the frame rate of races, 30 as on the console (src/game/hooks.cpp)
+bool cpu_car_shadows = true;  // every car with the followed car's sun shadow (src/game/car_shadows.cpp)
 bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
 uint32_t fov_percent = 100;  // the race cameras' field of view, percent of the console's (src/game/hooks.cpp)
@@ -74,6 +77,7 @@ const app::GameInfo app::kGame = {
     .images = {{"default.xbe", "PGR2"}},  // each recompiled xbe and its exe, for title launches
     // game settings kept in the settings file
     .options = {{"skip_intro", &pgr2::skip_intro, nullptr, "Skip intro movies", "At the next start."},
+                {"cpu_car_shadows", &pgr2::cpu_car_shadows, nullptr, "Sun shadows on every car", "Not on the console, where only the followed car has one; at once."},
                 {"hide_hud", &pgr2::hide_hud, nullptr, "Hide the race HUD", "For screenshots and replays; at once."},
                 {"fov_percent", nullptr, &pgr2::fov_percent, "Race camera field of view (%)",
                  "100 is the console's; 50 to 200, at once."},
