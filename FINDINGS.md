@@ -100,6 +100,12 @@ Each item is marked:
   4096 units and flickered; `src/game/draw_filter.cpp` drew it 4096 units nearer. Since W-buffering that nudge is a
   quarter of a metre and put the shadow on the car's lower body in the sun, while the plain pass looks right: the
   nudge is off (`PGR2_SHADOW_NEARER=1` brings it back).
+- **Car shadow draw.** A multiply (0, SRCCOLOR) with the depth map in stage 0. Its pixel shader outputs the vertex colour and never
+  reads T0 in the combiners; the shape comes from the alpha kill on stage 0, which discards fragments the comparison leaves out. So the
+  shadow is one flat shade per car, and only shadowed fragments reach blending and stencil. No draw uses stencil in a race (0 of
+  7.8 million). With a shadow per car (`cpu_car_shadows`) `draw_filter.cpp` marks stencil on those draws alone, with a value that
+  changes each frame, so a pixel takes one shadow. Draw filters run away from the guest call that made the draw (a flag set around
+  `0x21920` also sees world and depth map draws), so match the draw itself, not the routine around it.
 - **Polygon offsets** match the XDK exactly at 3x upscale. The layers that rely on them are road shadows, kerbs and
   decals.
 - **Light pool under the car.** This is a 256x256 target drawn each frame, sampled in stage 3 by the road. The
@@ -171,6 +177,7 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   Cache `+0x54` is not the bytes held.
   With `PGR2_TEX_DIST` at 250 m or more the small version share falls to 3 to 5% moving and under 1% parked, and the 8 MB cache then fills when parked, so the budget limits from there.
   On Metal at one parked pose per city (Florence, Chicago) the wider requests made no visible difference, and Chicago's 4.5 MB cache filled, leaving 14% small.
+- **[PGR2] Hood and bumper views** (0x179E90 false, view mode 4): 0x1D0C0 clears the shadow map (0x188C20) for the car it sits on instead of drawing it; the mesh pass 0x21920 still runs.
 
 ## The gearbox
 

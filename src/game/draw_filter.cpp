@@ -15,7 +15,8 @@
 #include "kernel/memory.h"
 
 namespace pgr2 {
-extern bool dlc;  // src/common/game_info.cpp
+extern bool dlc, cpu_car_shadows;  // src/common/game_info.cpp
+extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
 }
 
 namespace {
@@ -91,7 +92,50 @@ void TraceShadow(const gpu::State& s) {
 }
 bool g_trace_shadow = false;
 
+// With a sun shadow on every car (src/game/car_shadows.cpp) overlapping shadows would multiply the ground twice. PGR2 uses no stencil
+// in a race, so each shadow draw leaves this frame's mark and skips pixels that have it. A shadow draw is a multiply reading a depth
+// texture; the fragments its comparison leaves out are discarded (alpha kill on stage 0), so only shadowed pixels are marked. The
+// marks are set for that one draw, here because the guest can't reach it alone, and the next draw's call puts the state back.
+class OneShadowEach {
+public:
+    void Filter(const gpu::State& s) {
+        if (set_) {
+            gpu::State& state = const_cast<gpu::State&>(s);
+            state.rs[gpu::kRsStencilEnable] = enable_;
+            state.rs[gpu::kRsStencilFail] = fail_;
+            for (int i = 0; i < kSimple; i++) state.simple[kMethods[i] >> 2] = saved_[i];
+            set_ = false;
+        }
+        if (!pgr2::cpu_car_shadows || !s.simple[gpu::kMBlendEnable >> 2] || s.simple[gpu::kMSrcBlend >> 2] != 0 ||
+            s.simple[gpu::kMDestBlend >> 2] != 0x300 || !s.textures[0])
+            return;
+        gpu::TextureDesc t;
+        if (!gpu::Describe(s.textures[0], t) || !gpu::Format(t.format).depth) return;
+        gpu::State& state = const_cast<gpu::State&>(s);
+        enable_ = s.rs[gpu::kRsStencilEnable];
+        fail_ = s.rs[gpu::kRsStencilFail];
+        const uint32_t values[kSimple] = {kNotEqual, pgr2::g_shadow_mark, 0xFF, 0xFF, kKeep, kReplace};
+        for (int i = 0; i < kSimple; i++) {
+            saved_[i] = s.simple[kMethods[i] >> 2];
+            state.simple[kMethods[i] >> 2] = values[i];
+        }
+        state.rs[gpu::kRsStencilEnable] = 1;
+        state.rs[gpu::kRsStencilFail] = kKeep;
+        set_ = true;
+    }
+
+private:
+    static constexpr int kSimple = 6;
+    static constexpr uint32_t kMethods[kSimple] = {gpu::kMStencilFunc, gpu::kMStencilRef, gpu::kMStencilMask,
+                                                   gpu::kMStencilWriteMask, gpu::kMStencilZFail, gpu::kMStencilPass};
+    static constexpr uint32_t kNotEqual = 0x205, kKeep = 0x1E00, kReplace = 0x1E01;
+    bool set_ = false;
+    uint32_t enable_ = 0, fail_ = 0, saved_[kSimple] = {};
+};
+OneShadowEach g_one_shadow;
+
 void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
+    g_one_shadow.Filter(s);
     if (g_trace_shadow) TraceShadow(s);
     if (g_skip_error_material && s.ps && s.simple[gpu::kMPsConstant0 >> 2] == kErrorMagenta) {
         static std::atomic<int> said{0};
@@ -115,7 +159,6 @@ void InstallDrawFilter() {
     g_skip_error_material = pgr2::dlc;
     const char* trace = std::getenv("PGR2_TRACE_SHADOW");
     g_trace_shadow = trace && *trace == '1';
-    if (!shadow && !g_skip_error_material && !g_trace_shadow) return;  // the game's draws as they come
     gpu::g_draw_filter = Filter;
     if (shadow) LOGR("pgr2: PGR2_SHADOW_NEARER=1, draw filter installed (car shadow pass nearer)");
     if (g_skip_error_material) LOGR("pgr2: DLC cities on, draws with PGR2's error material are left out");

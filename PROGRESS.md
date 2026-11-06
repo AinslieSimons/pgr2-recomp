@@ -37,6 +37,19 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - CPU car shadows in the hood and bumper views
+In the hood and bumper views the game leaves out the followed car's map (0x1D0C0 to 0x188C20) but still runs the pass, which `car_shadows.cpp` only extended after a map. It now draws the others there too and empties the map again. Harness: the pass count keeps rising in view mode 4 with the fix (3601 at 267 s) and stops without it. The harness samples had no car in view; the shadows were confirmed in a real race on Metal. Windows untested.
+
+### 2026-11-06 - overlapping car shadows darken once
+Each car's sun shadow is its own multiply, so where two met the road darkened twice. The shadow draw discards what its comparison
+leaves out and no draw uses stencil in a race, so `draw_filter.cpp` now marks stencil on shadow draws only, and later ones skip marked
+pixels. `car_shadows.cpp` draws the followed car first and the others nearest first, as the first drawn sets the shade. Nothing happens
+with `cpu_car_shadows` off.
+Metal, parked in Stockholm, the followed car's mesh drawn twice as a test: shadowed road green 27.0 without the mark, 41.5 with it, 41.5
+for one pass with or without it; lit road 73.9 throughout. Picture: `.local/lodbase/shadow/one_shadow.png`. Not seen: two real cars' shadows
+overlapping (the race start gave none, and moving a car's position for the pass did not land its shadow on another's). No backend
+changed, but D3D11 and D3D12 are untried, as `wincheck` needs Linux. Smoke not run.
+
 ### 2026-11-06 - car and mirror detail on by default
 `car_detail` now starts at 2 (highest) and `mirror_detail` on, for every platform: no cost measured on Metal on an M4 Pro. Windows and slower machines not tried. A
 settings file that already holds a value keeps it.
