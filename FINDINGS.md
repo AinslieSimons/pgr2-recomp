@@ -150,6 +150,28 @@ Each item is marked:
   axes as they come. There is no wheel choice or wheel dead zone in the game's options. The SDK reports a port
   steered by a bound wheel as one (re-plugging it when that changes).
 
+## Level of detail
+
+Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11-05) unless marked as read from the code or data.
+
+- **[PGR2] Camera kinds** (`+0x40`): 0 main, 1 mirror, 2 reflection cube, 3 planar reflection. Measured main: far 3000, object range
+  x1, width 640, scale 1.06. Mirror: far 500, range x0.3, width 200, scale 1.13, view mode 4 only. Cube: far 30, range x0.1, 256 wide.
+  The draw distance option does not change the mirror's far plane (0x291A08) or any object range.
+- **[PGR2] Car detail** `car+0x15D0` (0x3210C, 0x321E9): trunc(3.34 x (log10(10 x cars in view) - 1)) + trunc(2000 / (width x radius x
+  scale x 11 / depth)), the followed car 0. One level is about 7.3 m in the main view and 2.4 m in the mirror, as the formula gives
+  for a radius near 2. Each part has up to 10 index sets over the same vertices (read from the disc's 86 cars).
+  `src/game/detail.cpp` raises the float 0x2919C8 from 11 to 44 (high) or writes level 0 (highest); full mirror detail makes the mirror's far and range the main view's. Highest and full are the defaults (2026-11-06).
+- **[PGR2] City geometry and placed objects** have one level (read from the data). Objects have a range at mesh +0x12: 50 to 1000, or
+  65535 for always. Largest buckets seen: 575 of 1000, 163 of 2000, 29 of 400.
+- **[PGR2] Textures** have two tiers: about two thirds of a city's have a small version always held (usually 32) and a full one in
+  `.pak_stream` (often 256). Bit 0 of 0x455CB6 turns on the per-frame requests (0x11A49A); it reads 0x0B in a race, though no direct
+  write sets it. A request needs distance / 100 <= the texture's class, 0 for nearly all, so about 100 m. The city's `TexCacheSize`
+  did not limit Florence (8 MB): after the start it held 0.4 to 3.6 MB, with 8 MB only in the load before the race. Evictions kept
+  up with loads. 10 to 22% of main view binds of streamed textures showed the small version, each 3 size steps (8x) short.
+  Cache `+0x54` is not the bytes held.
+  With `PGR2_TEX_DIST` at 250 m or more the small version share falls to 3 to 5% moving and under 1% parked, and the 8 MB cache then fills when parked, so the budget limits from there.
+  On Metal at one parked pose per city (Florence, Chicago) the wider requests made no visible difference, and Chicago's 4.5 MB cache filled, leaving 14% small.
+
 ## The gearbox
 
 - **[PGR2]** The player's gear is the signed byte at 0x29DACA + car x 0x6990 (the gearbox 0x29DAB0, +0x1A; -1 reverse,

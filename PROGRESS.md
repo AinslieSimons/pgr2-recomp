@@ -37,6 +37,48 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - car and mirror detail on by default
+`car_detail` now starts at 2 (highest) and `mirror_detail` on, for every platform: no cost measured on Metal on an M4 Pro. Windows and slower machines not tried. A
+settings file that already holds a value keeps it.
+
+### 2026-11-05 - car and mirror detail settings
+
+`src/game/detail.cpp`, the settings `car_detail` (0 console, 1 high, 2 highest) and `mirror_detail`, in F1 and Recomp > Picture; both start at the
+console's. Game page had no room: a tenth row ran into the help line. Headless Florence street race, 4 cars: main view draws at level 7 or more
+53% console, 18% high, 0% highest; mirror 98%, 56%, 0%. Mirror reads far 3000 and range x1 with full detail, and its largest instance bucket
+rose from 139 to 302 of 1000. Total draws over the run up about 3 to 4%. No fatal errors. On Metal, one parked pose switched mid run: Chicago's mirror
+gains skyline past 500 m, Florence's changes little. Metal street race with highest car detail, mirror off and on, two runs each: slow frames (over
+50 ms) 32, 20, 17, 8 off and 3, 1, 5, 2 on, longest 56 ms; no cost seen, though the `frames:` lines sample unevenly, so this is not a fine measure.
+Not done: a close look at another car at each level on Metal; changing the rows by hand; smoke test. Next: try it by hand in a race.
+
+### 2026-11-05 - wider texture requests on Metal: no visible gain at the poses tried
+
+Isolated copies under `.local/metal` (the player's saves and settings untouched), render scale 200, 16x filtering, 2560x1440 shots.
+`PGR2_TEX_AFTER` switches `PGR2_TEX_DIST=500` on mid run, so both settings share one parked pose. Florence: small versions 6.4% to 0%
+of main view binds, pixel change 0.114 against 0.069 between two later frames of the same setting. Chicago: 14.4% to 14.1%, cache
+full at 4.36 of 4.5 MB, change 0.027 against 0.012. No visible difference in either image pair (`.local/lodbase/metal`). Metal does not
+apply the textures' LOD bias, which may hide some detail. Stalls while moving are unsettled: one comparable pair, 21.8% and 33.1% of
+frames over 50 ms, longest 100 and 129 ms, and four more runs never reached a race. Only one parked pose per city. Not shipped as a setting.
+Scripted Time Attack: `XBE_KEYS="8:27:0.4 12:13:0.4 16:13:0.4 20:39:0.3 22:39:0.3 24:13:0.4 28:13:0.4 ... 52:13:0.4"` (from a profile).
+Next: Metal LOD bias, then car detail and the mirror.
+
+### 2026-11-05 - full textures asked for farther out (experiment)
+
+`PGR2_TEX_DIST=metres` in `src/game/lod_probe.cpp` widens the per-frame request. Same Florence race at 100 (the game's), 250, 500 and
+1000 m, run together: small versions in main view binds while moving 14.6%, 5.3%, 4.1%, 3.4%; parked 14.5%, 0.9%, 0.7%, 0%. Bytes held
+while moving averaged 2.4, 5.0, 5.6, 5.7 MB of 8; parked 2.4, 7.0, 7.8, 7.8. No fatal errors and the same frame count in each. Frames
+(CPU renderer, 640x480) at the same parked pose show a mild sharpening on farther buildings, `.local/lodbase/tex`. The 1000 m car
+ended up elsewhere, and 100 m differed from 250 and 500 for part of the race; no repeat at one setting was run, so whether the
+setting or timing caused that is unknown. Not measured: a small cache city, Metal, higher render scale, stall time. Next: Chicago.
+
+### 2026-11-05 - level of detail measured (visuals work, phase 0)
+
+`src/game/lod_probe.cpp` (`PGR2_LOD_PROBE=1`) logs `lod:` lines every 5 s. Pad `scripts/pad/lodprobe.txt`: Florence street race,
+4 cars, changing view. Run on the Mac harness with `-g assets/pgr2.iso` (`-g assets` fails: `D:\Cache\Intro1.Xmv` missing). Moving
+from about 150 s to 240 s of the run, then against a barrier, so the moving sample is short. Logs and reference frames (CPU renderer,
+640x480, not Metal) in `.local/lodbase`. Results are in FINDINGS.md, "Level of detail". Not measured: a city with a small texture
+cache, and the look of any change. Next: ask for textures farther out and compare; car and mirror settings.
+
 ### 2026-11-03 - Release 1.6.0: the prebuilt model
 - Published by Harry from main 93de261 (SDK 97b1654): PGR2Launcher.exe 2.4 MB, PGR2-package.zip 73.3 MB (41 entries, PGR2.exe and the
   compiler; no game code), its .json matching size and SHA-256 as downloaded here. Harry re-tested the release: "Works great".

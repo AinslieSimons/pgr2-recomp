@@ -35,7 +35,8 @@ namespace pgr2 {
 extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
-extern uint32_t fov_percent, draw_distance_percent;
+extern uint32_t fov_percent, draw_distance_percent, car_detail;
+extern bool mirror_detail;
 
 namespace {
 
@@ -154,6 +155,14 @@ const std::vector<Row> kPicture = {
     {u"Sharp Text and HUD", u"Menus, text and the HUD drawn crisp at high resolutions.", OnOff,
      [] { return uint32_t(app::Get().sharp_2d); },
      [](uint32_t i) { app::Get().sharp_2d = i != 0; }},
+    {u"Car Detail", u"How far other cars keep their full shape.",
+     [] { return Choices{u"Console", u"High", u"Highest"}; },
+     [] { return std::min<uint32_t>(car_detail, 2); },
+     [](uint32_t i) { car_detail = i; }},
+    {u"Mirror Detail", u"The mirror sees and draws as the main view. May cost frame rate.",
+     [] { return Choices{u"Console", u"Full"}; },
+     [] { return uint32_t(mirror_detail); },
+     [](uint32_t i) { mirror_detail = i != 0; }},
 };
 
 const std::vector<Row> kPerformance = {
@@ -348,7 +357,7 @@ struct Section {
     const std::vector<Row>* rows;
 };
 const Section kSections[] = {
-    {u"Picture", u"Anti-aliasing, sharpening and textures.", &kPicture},
+    {u"Picture", u"Anti-aliasing, sharpening, textures and detail.", &kPicture},
     {u"Performance", u"Render scale, frame cap, latency and renderer.", &kPerformance},
     {u"Display", u"Monitor, display mode, resolution and aspect ratio.", &kDisplay},
     {u"Game", u"Frame rate, draw distance, language and more.", &kGame},

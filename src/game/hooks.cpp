@@ -141,6 +141,9 @@ namespace pgr2 {
 extern bool skip_intro, hide_hud;
 extern uint32_t race_fps;
 extern uint32_t fov_percent, draw_distance_percent;
+void ApplyDetail();                    // src/game/detail.cpp
+void MirrorFarBefore(uint32_t camera);
+void MirrorRangeAfter(uint32_t camera);
 void ApplySettingsEntry();  // src/game/settings_entry.cpp
 }
 
@@ -222,7 +225,10 @@ X86_EXTERN_FUNC(__imp__sub_001859A0);
 X86_FUNC(sub_001859A0) {
     static Scaled race;
     race.Apply(0x49DFDC, DrawPercent());
+    const uint32_t cam = ctx.ecx;
+    pgr2::MirrorFarBefore(cam);
     __imp__sub_001859A0(ctx, base);
+    pgr2::MirrorRangeAfter(cam);
 }
 
 // ultrawide: the game's widescreen 3D views (race cameras 0x1857F0, garage, showroom: 0x88480, 0x16E960, 0x184530)
@@ -332,6 +338,7 @@ X86_FUNC(sub_000D90F0) {
     was = pgr2::hide_hud;
     pgr2::ApplySettingsEntry();
     ApplyDrawDistance();
+    pgr2::ApplyDetail();
     ApplyAspect();
     __imp__sub_000D90F0(ctx, base);
     ApplyFov();

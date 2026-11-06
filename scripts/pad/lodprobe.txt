@@ -1,0 +1,31 @@
+# Kudos World Series, the first event: Compact Sports Series, Street Race (Florence, Duomo 2, 2 laps), MINI Cooper
+# S, Auto, Novice; start from the grid, then accelerate for 60 seconds.
+# from a first boot: make the profile "Player" with every default (as save1.txt)
+4760 START 30
+4910 START 20
+5060 A 10
+5360 A 10
+5660 A 10
+5960 A 10
+6260 A 10
+# main menu: Single Player
+6760 A 10
+# Single Player: Kudos World Series
+7060 A 10
+# series (Compact Sports), event (Street Race), car (MINI), Auto, difficulty (Novice)
+7360 A 10
+7660 A 10
+7960 A 10
+8260 A 10
+8560 A 10
+# pre-race: Start Race; the city loads, then the grid's Start Race
+8860 A 10
+10460 A 10
+# hold the throttle; change view every 15 seconds, so each view (the mirror is in view mode 4) gets a window
+10760 RT 6000
+11900 BLACK 4
+12800 BLACK 4
+13700 BLACK 4
+14600 BLACK 4
+15500 BLACK 4
+16400 BLACK 4

@@ -12,7 +12,8 @@ void InstallDrawFilter();  // src/game/draw_filter.cpp
 
 namespace pgr2 {
 extern bool skip_intro, hide_hud, dlc, cpu_car_shadows;
-extern uint32_t fov_percent, draw_distance_percent;
+extern uint32_t fov_percent, draw_distance_percent, car_detail;
+extern bool mirror_detail;
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -47,6 +48,8 @@ void Init() {
     if (const char* e = std::getenv("PGR2_HIDE_HUD"); e && *e == '1') pgr2::hide_hud = true;
     if (const char* e = std::getenv("PGR2_FOV")) pgr2::fov_percent = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_DRAW")) pgr2::draw_distance_percent = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_CAR_DETAIL")) pgr2::car_detail = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_MIRROR_DETAIL"); e) pgr2::mirror_detail = *e == '1';
     InstallDrawFilter();  // after the options: the DLC setting picks its part
     pgr2::RaiseFrameCap();
 }
@@ -59,6 +62,8 @@ bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
 uint32_t fov_percent = 100;  // the race cameras' field of view, percent of the console's (src/game/hooks.cpp)
 uint32_t draw_distance_percent = 100;  // how far the race cameras see, percent of the console's (src/game/hooks.cpp)
+uint32_t car_detail = 2;  // 0 the console's, 1 high, 2 highest (src/game/detail.cpp)
+bool mirror_detail = true;  // the mirror sees and draws as the main view does (src/game/detail.cpp)
 bool dlc = false;  // the Xbox Live city packs in T:\$C, on the disc's game (src/game/dlc.cpp)
 }
 
@@ -83,6 +88,10 @@ const app::GameInfo app::kGame = {
                  "100 is the console's; 50 to 200, at once."},
                 {"draw_distance_percent", nullptr, &pgr2::draw_distance_percent, "Draw distance (%)",
                  "100 is the console's; 25 to 400, from the next race. Experimental: most streets end before it."},
+                {"car_detail", nullptr, &pgr2::car_detail, "Car detail",
+                 "0 the console's, 1 high, 2 highest (the default): how far other cars keep their full shape; at once."},
+                {"mirror_detail", &pgr2::mirror_detail, nullptr, "Full mirror detail",
+                 "On by default: the mirror sees as far and draws as much as the main view; may cost frame rate on slower machines in the views with a mirror; at once."},
                 {"race_fps", nullptr, &pgr2::race_fps, "Race frame rate",
                  "30 (the console's), 60, 90, 120 or 144; at the next start. Same physics. Above 60 busy streets dip on most CPUs."},
                 {"dlc", &pgr2::dlc, nullptr, "Xbox Live DLC cities (experimental)",
