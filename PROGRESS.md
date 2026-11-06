@@ -37,8 +37,15 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - every streamed texture at full size
+`src/game/full_textures.cpp`, on by default (`full_textures`, a row in the Recomp menu, `PGR2_FULL_TEXTURES=0`): at the sync load 0x1078F0(0) each block with a stream part is read and inflated into guest memory at 0x40000000, past what the title allocates, and the swap and eviction are held off. No SDK change: renderers take such an address as it is.
+Metal, Chicago, 2 runs each way: main view binds showing the small version 26 to 27% off, 0% on; slow frames 0.9% and 0.3% on, 0.3% and 0.4% off; longest frame 698 ms in one on run, 133 to 158 ms in the others. Load 0.46 s for 1186 textures, 59 MB. Screenshots rendered correctly; poses differ between runs, so no same-pose picture comparison. Harness Florence and Chicago race: no fatal error. Windows untested. Correction: the 305 MB total was wrong, see FINDINGS.md: Chicago is 55 MB.
+
 ### 2026-11-06 - CPU car shadows in the hood and bumper views
 In the hood and bumper views the game leaves out the followed car's map (0x1D0C0 to 0x188C20) but still runs the pass, which `car_shadows.cpp` only extended after a map. It now draws the others there too and empties the map again. Harness: the pass count keeps rising in view mode 4 with the fix (3601 at 267 s) and stops without it. The harness samples had no car in view; the shadows were confirmed in a real race on Metal. Windows untested.
+
+### 2026-11-06 - texture memory limits and the kinds of reflection
+Read-only runs from a private build (nothing added to the source). A larger cache in the game's own memory failed at 16, 24 and 48 MB. Reflections: a live cube for the followed car, a fixed city cube for other cars and world objects, some bump-mapped; no planar pass seen. Numbers in FINDINGS.md. Open: water's draw not confirmed; next would be full textures supplied on the host side.
 
 ### 2026-11-06 - overlapping car shadows darken once
 Each car's sun shadow is its own multiply, so where two met the road darkened twice. The shadow draw discards what its comparison

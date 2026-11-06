@@ -32,6 +32,10 @@ X86_EXTERN_FUNC(__imp__sub_00119430);
 X86_EXTERN_FUNC(__imp__sub_001193E0);
 X86_EXTERN_FUNC(__imp__sub_0011A670);
 
+namespace pgr2 {
+bool FullTextureHeld(uint32_t block);
+}
+
 namespace {
 using kernel::G;
 using kernel::R32;
@@ -143,6 +147,10 @@ X86_FUNC(sub_001003E0) {
 
 // ages a block in the cache and evicts it past 20
 X86_FUNC(sub_00100C00) {
+    if (pgr2::FullTextureHeld(R32(ctx.esp + 4))) {  // src/game/full_textures.cpp: stays
+        kernel::Return(ctx, 0, 1);
+        return;
+    }
     if (!On()) return __imp__sub_00100C00(ctx, base);
     uint32_t flags = kBlocks + (R32(ctx.esp + 4) & 0xFFFF) * kBlockStride + 8;
     uint8_t before = G<uint8_t>(flags);

@@ -36,7 +36,7 @@ extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail;
+extern bool mirror_detail, full_textures;
 
 namespace {
 
@@ -163,6 +163,9 @@ const std::vector<Row> kPicture = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(mirror_detail); },
      [](uint32_t i) { mirror_detail = i != 0; }},
+    {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
+     [] { return uint32_t(full_textures); },
+     [](uint32_t i) { full_textures = i != 0; }},
 };
 
 const std::vector<Row> kPerformance = {
