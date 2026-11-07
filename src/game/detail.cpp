@@ -3,16 +3,25 @@
 // sets over the same vertices, so a lower level costs triangles but no draws. It grows with distance / (viewport width x the
 // float 0x2919C8), plus a term for the cars in view. The mirror's camera is 200 wide against the main view's 640, sees 500 against
 // 3000 (the float 0x291A08) and draws each object to 0.3 of its range (cam +0x20).
+// A tree takes its detail from its size on screen (0x49780, pixels): 0x49F30 draws size x 0.0025 of its leaf points (0x49B40, one
+// point list; past 0.5 the fuller shader) and nothing below the int 0x2DF470, and 0x49E70 picks one of 6 mesh levels from the
+// table 0x2DF324..0x2DF374, stride 0x10, the largest first. Full tree detail reports a size past all of those, in the main view and
+// with full mirror detail the mirror. The city's own object ranges are not what limits trees: 100 times them drew the same points.
 // PGR2_DETAIL_AFTER=seconds (test): these take effect that long after the first race camera, to compare at one pose in one run.
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 
+#include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
+
+X86_EXTERN_FUNC(__imp__sub_00049780);
 
 namespace pgr2 {
 extern uint32_t car_detail;  // 0 the console's, 1 high (detail falls 4 times as slowly), 2 highest (always level 0)
 extern bool mirror_detail;   // the mirror sees and draws as the main view does
+extern bool tree_detail;     // trees at full detail at any distance
 
 namespace {
 using kernel::G;
@@ -20,7 +29,8 @@ using kernel::R32;
 
 constexpr uint32_t kCamera = 0x3CD804, kSizeFactor = 0x2919C8, kMirrorFar = 0x291A08, kRaceFar = 0x49DFDC;
 constexpr uint32_t kCamKind = 0x40, kCamRange = 0x20, kCamFactor = 0x24, kCarLevel = 0x15D0, kMirror = 1;
-constexpr float kConsoleSize = 11, kHighSize = 44;
+constexpr float kConsoleSize = 11, kHighSize = 44, kFullPoints = 400;
+constexpr uint32_t kTreeLevels = 0x2DF324;
 
 void PutFloat(uint32_t va, float f) { std::memcpy(&G<uint32_t>(va), &f, 4); }
 float Float(uint32_t va) {
@@ -67,3 +77,11 @@ void MirrorRangeAfter(uint32_t cam) {
     if (R32(cam + kCamKind) == kMirror && MirrorDetail()) PutFloat(cam + kCamRange, Float(cam + kCamFactor));
 }
 }  // namespace pgr2
+
+// thiscall (matrix, out depth), ret 8: a tree's size on screen, on the FPU stack
+X86_FUNC(sub_00049780) {
+    __imp__sub_00049780(ctx, base);
+    if (!pgr2::tree_detail) return;
+    const uint32_t kind = kernel::R32(kernel::R32(pgr2::kCamera) + pgr2::kCamKind);
+    if (kind == 0 || (kind == pgr2::kMirror && pgr2::MirrorDetail())) X87_ST(0) = std::max(double(X87_ST(0)), double(std::max(pgr2::kFullPoints, pgr2::Float(pgr2::kTreeLevels)) + 1));
+}

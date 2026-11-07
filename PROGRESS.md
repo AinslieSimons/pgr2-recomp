@@ -37,6 +37,9 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - trees at full detail at any distance
+`src/game/detail.cpp`, on by default (`tree_detail`, Recomp > Picture "Tree Detail", `PGR2_TREE_DETAIL=0`): 0x49780's on screen size is reported past every threshold in the main view, and in the mirror with full mirror detail. Harness, Sydney route 119 at the same frame numbers, poses differ a little: points 6764 off, 26660 on; 3333 off, 39684 on; 6278 off, 9775 on. Object ranges at 100 times changed no points. Metal, 2 runs each way: slow frames 0.3% off, 0.4 and 0.9% on, longest 120 to 128 ms off, 132 ms on; another session's timing runs may have overlapped. Picture: `.local/ft/tree_detail_off_on.png`. Windows untested; other cities not measured.
+
 ### 2026-11-06 - audio queue crash at guest address 4: ARM shows a command's pointer before its data
 
 The Metal crash of 01:00 (`EXC_BAD_ACCESS` at guest 4, `0x11D590` < `0x129C80` < `0x12C540` < `0x12E1A0`, thread `guest 34`) was not a null `[ecx+0x2A8]`:
