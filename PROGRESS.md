@@ -37,6 +37,9 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-07 - macOS: no Direct3D renderer choice or Low Latency
+On macOS the Renderer row (Direct3D 12 / Direct3D 11) is gone from F1 and Recomp > Performance, and the settings file names the renderer `metal`; a file from Windows naming d3d12 or d3d11 is read as Metal. Windows unchanged. Low Latency is hidden on the Mac too, where it did nothing (a D3D swap chain setting); its value stays in the file. Built on macOS; the Windows build not compiled.
+
 ### 2026-11-07 - Metal applies the sampler LOD bias
 `metal.mm`: a sampler takes the title's bias through `MTLSamplerDescriptor.lodBias` (macOS 26 and later; earlier versions log once that it is left out), as D3D does. Step 1 of the 2026-11-06 visuals plan.
 Evidence: the biases seen on Metal are -2 (menus), -3 (cars) and -1 (city), on linear and on 16x anisotropic samplers. A forced +4 blurred everything, so the field works. Route 115, 1920x1080, render 100%, 16x filtering, same frames with and without: menu frames identical, race frames 2 to 6% more edge contrast (distant buildings and signs). At render 300% no difference: the textures are already at their top level. Windows unchanged. Smoke not run (headless does not use Metal).

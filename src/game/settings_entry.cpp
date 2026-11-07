@@ -185,16 +185,20 @@ const std::vector<Row> kPerformance = {
      [] { return Choices{u"30", u"60", u"120", u"144", u"240", u"None"}; },
      [] { return NearestCap(app::Get().fps_cap); },
      [](uint32_t i) { app::Get().fps_cap = kCaps[i]; }},
+#ifndef __APPLE__  // a D3D swap chain's; Metal has no such setting
     {u"Low Latency", u"Next start. Less input lag; a slow frame shows more.", OnOff,
      [] { return uint32_t(app::Get().low_latency); },
      [](uint32_t i) { app::Get().low_latency = i != 0; }},
+#endif
     {u"Frame Counter", u"Frames a second in a corner of the screen.", OnOff,
      [] { return uint32_t(app::Get().show_fps); },
      [](uint32_t i) { app::Get().show_fps = i != 0; }},
+#ifndef __APPLE__  // Metal is the Mac's only renderer
     {u"Renderer", u"At the next start. Direct3D 11 if 12 misbehaves.",
      [] { return Choices{u"Direct3D 12", u"Direct3D 11"}; },
      [] { return app::Get().renderer % 2; },
      [](uint32_t i) { app::Get().renderer = i; }},
+#endif
 };
 
 const std::vector<Row> kDisplay = {
@@ -365,7 +369,11 @@ struct Section {
 };
 const Section kSections[] = {
     {u"Picture", u"Anti-aliasing, sharpening, textures and detail.", &kPicture},
+#ifdef __APPLE__
+    {u"Performance", u"Render scale and frame cap.", &kPerformance},
+#else
     {u"Performance", u"Render scale, frame cap, latency and renderer.", &kPerformance},
+#endif
     {u"Display", u"Monitor, display mode, resolution and aspect ratio.", &kDisplay},
     {u"Game", u"Frame rate, draw distance, language and more.", &kGame},
     {u"Controls", u"Keyboard and mouse.", &kControls},
