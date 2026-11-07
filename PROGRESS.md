@@ -37,6 +37,9 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-06 - freeze at a race's end and the replay screen, on Metal
+No crash report, clean exit when the window closed. `sample` of a frozen Metal run: guest 14 at 100% in 0x114CC0, called for each of 4000 light tests from 0x187DC0, polling GetVisibilityTestResult (0x1C3610) for a report that never came. sdk `metal.mm`: Flush waited only for a buffer it committed itself, so a report on an earlier buffer stayed pending, and the game no longer presented to get another flush. It now waits for the newest committed buffer. Confirmed in a real race on Metal: replay works. Harness (no Metal, never froze): viewing a replay and pressing through Save ran, `Replay.193` written. D3D11 and D3D12 unchanged, untested.
+
 ### 2026-11-06 - stream slot stop and frame time queue, safe between cores
 
 The two "any core" fixes from the audit below. `src/game/stream_slots.cpp`: `0x174CA0` no longer calls a slot's stream. It sets the flags at once as before and leaves the stream for `0x176BB0`, which calls it on `guest 18` under `0x485DB4`, only if the slot still holds that stream, so a sound ends up to one pass later (about 16 ms). `0x174A50` made the same unlocked call, so it now holds the lock throughout. `src/game/frame_times.cpp`: one host mutex around `0xD9010` and `0xD8FC0`.

@@ -84,6 +84,7 @@ Each item is marked:
 - **[console] Visibility tests.** Titles poll GetVisibilityTestResult inside a frame, so D3D_SetFence flushes when a
   report was asked for. In PGR2 a light glow's brightness comes from a visibility probe: an XYZRHW quad drawn
   between Begin and EndVisibilityTest (0x114FA0 / 0x114D20, 0x1C42F0).
+  At a race's end 0x187DC0 waits for every pending test with no present in between (0x114CC0), so a report must not depend on a later frame to arrive.
 - **[console] Other fixes:**
   - Immediate mode under an FVF keeps every slot written. The movies' texture coordinates are in slot 9.
   - A declaration longer than the stride reads the next vertex's bytes.
