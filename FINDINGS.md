@@ -295,7 +295,8 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
 
 - **[console]** The software mixer plays everything PGR2 uses: streams, ADPCM, the engine via SetFrequency, and
   the music fades.
-- Not modelled yet: the DSP effects image and I3DL2 reverb. Filters: the low pass is (2026-11-07, `SetFilter` in dsound.cpp),
+- Not modelled yet: the DSP effects image (the engine distortion). I3DL2 reverb: on the host since 2026-11-07
+  (`audio/reverb.cpp`, fed by mix bin 10, following the listener's parameters rather than the DSP code). Filters: the low pass is (2026-11-07, `SetFilter` in dsound.cpp),
   the parametric EQ section is not (PGR2 set gain 0x2665 at EQ FC 0xB545, about 300 Hz, Q 1, on two voices; logged). What PGR2 asks of them (2026-11-07,
   headless races with the calls logged; plan in PROGRESS.md):
   - **[PGR2]** Doppler and velocity are never called (IDirectSound/Buffer/Stream SetDopplerFactor, SetVelocity), nor
