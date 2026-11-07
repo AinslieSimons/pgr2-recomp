@@ -42,7 +42,7 @@ build/macapp/PGR2
 Settings, saves (`hdd/`), logs and screenshots go beside the executable. The first start formats the emulated cache and
 takes about two minutes, behind the intro movies. Keys are as in the README; on a Mac without a numpad the D-pad keys need
 remapping. Testing switches: `XBE_KEYS="seconds:vk:held ..."` presses keys by the clock, `XBE_SHOT_EVERY=N` saves every
-Nth frame, `XBE_OPEN_SETTINGS=1` opens the settings window. `tools/mslcheck` compiles a folder of shaders dumped by the
+Nth frame, `XBE_OPEN_SETTINGS=1` opens the settings window. `XBE_AUDIO_WAV=file` records what the mixer hands the output (16 bit stereo, 48 kHz, beside the executable). `tools/mslcheck` compiles a folder of shaders dumped by the
 harness's `AUDIT=N` through the translator.
 
 ## Dock app and shader cache

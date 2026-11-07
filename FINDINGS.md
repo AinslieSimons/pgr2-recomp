@@ -295,7 +295,33 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
 
 - **[console]** The software mixer plays everything PGR2 uses: streams, ADPCM, the engine via SetFrequency, and
   the music fades.
-- Not modelled (accepted, no effect): the DSP effects image, I3DL2 reverb, filters and Doppler. Sound is dry.
+- Not modelled yet: the DSP effects image and I3DL2 reverb. Filters: the low pass is (2026-11-07, `SetFilter` in dsound.cpp),
+  the parametric EQ section is not (PGR2 set gain 0x2665 at EQ FC 0xB545, about 300 Hz, Q 1, on two voices; logged). What PGR2 asks of them (2026-11-07,
+  headless races with the calls logged; plan in PROGRESS.md):
+  - **[PGR2]** Doppler and velocity are never called (IDirectSound/Buffer/Stream SetDopplerFactor, SetVelocity), nor
+    I3DL2Source, SetEG or SetLFO. EnableHeadphones(0) only. Panning is the title's own speaker bin levels.
+  - **[PGR2]** Effects image `D:\data\audio\6WayDistortion.bin` (XAudioDownloadEffectsImage), 15 effects, no names:
+    0-7 alike (code 0x154, state 0x9C bytes), 8 small, 9 large (0x5CC60 bytes of delay memory: the I3DL2 reverb),
+    10, and 11-14 alike (0xA00 bytes of delay each); 8 and 10-14 never get SetEffectData.
+  - **[PGR2]** Engines: each car's voice sends to its own FXSEND, mix bins 11-16 at 0 mB (speaker bins often -10000,
+    so today they play dry through the send fallback), into distortion effects 0-7. SetEffectData(effect, offset 28,
+    44 bytes) many times a second: 11 DSP 24 bit fractions. Word 0 a per-car constant (0x2DD2F1 to 0x40C878), word 1
+    from 0x400000 up with the engine, words 2-5 a filter's coefficients moving with word 1, word 6 0x400000, words
+    7-10 a fixed filter (0x807B8A 0x3FCA81 0x7F8475 0xC0357E). Read as: filter, drive, filter. The DSP code is not
+    yet read, so the exact curve is a guess.
+  - **[PGR2]** Reverb: mix bin 10 is the reverb send (about 200 voice setups, mostly -2000 to -3000 mB).
+    IDirectSound_SetI3DL2Listener from 0x12E810 and 0x12EB35 with presets at 0x28F788 (48 bytes, DSI3DL2LISTENER):
+    0 off (room -10000), 1 (room -1000, decay 1.49 s, HF ratio 0.54, reflections -2560 mB at 0.162 s, reverb -613 mB
+    at 0.088 s, diffusion 79), 2 (0.4 s), 3 (1.65 s, HF ratio 2.0), 4 (2.1 s, reflections +1000, reverb +2000,
+    diffusion 12, HF reference 1000). Pairs set at 0x12B21F (4, 4: menus), 0x12B827 (1, 4: races) and 0x12BFDF
+    (a variable one and 3); 0x12EB35 blends the pair by [obj+0x30] and writes room as 0. Route of the race pad: preset 1
+    throughout the race, 4 (reflections and reverb at 0 mB) in the menus; what moves the blend is not traced.
+  - **[PGR2]** Filters: IDirectSoundBuffer_SetFilter from about 8 call sites (0x123416 to 0x1306C0), tens of
+    thousands of times in a race; streams almost always bypass. Modes 0 (bypass), 1 (DLS2 low pass) and 3 (multi).
+    The title builds them itself (0x126F80, 0x127110): cutoff FC = round(4096 x log2(2 sin(pi f / 48000))) & 0xFFFF
+    for 30 to 8000 Hz (0x8000 below, 0 above, 0x126E40); resonance K = min(32768 x 10^(-Q/20), 0xFFFF), Q in dB up
+    to 22.5 (0x126EA0); the parametric section's gain 16383 x g (g >= 0) or 0xC000 - 8192 x g. Seen cutoffs: about
+    110 Hz to 4.8 kHz.
 - **[PGR2]** The in-race radio (WMA from `data\audio\Radio\tracks`, decoded by the game's own WMADEC code into two
   44.1 kHz stereo PCM streams) goes to the effects send FXSEND 14 (mix bin 24) alone, every speaker bin at -10000: the
   DSP image plays it into the speakers (the in-car sound). With the effects not modelled it was silent in every build
