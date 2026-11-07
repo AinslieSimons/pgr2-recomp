@@ -309,7 +309,16 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
     44 bytes) many times a second: 11 DSP 24 bit fractions. Word 0 a per-car constant (0x2DD2F1 to 0x40C878), word 1
     from 0x400000 up with the engine, words 2-5 a filter's coefficients moving with word 1, word 6 0x400000, words
     7-10 a fixed filter (0x807B8A 0x3FCA81 0x7F8475 0xC0357E). Read as: filter, drive, filter. The DSP code is not
-    yet read, so the exact curve is a guess.
+    yet read, so the exact curve is a guess. The effects' states (image, 7 dword header: scratch offset and size, Y
+    memory offset and size, flags, then input and output pointers) give the routing: an input at X:0x1400 + bin x 0x20,
+    so effects 0-7 read bins 11-18, 9 (reverb) bins 10 and 20, 10 (cross talk) bins 6-9 into the speaker buffers
+    X:0xC00-0xCA0, 8 bins 23 and 24 (the radio). Effects 0-7 write X:0xD60-0xE40, which no effect in the image reads,
+    so how and how loud the distortion reaches the speakers is not known. The 11 parameters fit gain + two biquads
+    (b0 b1 b2 -a1 -a2, halved): unused effects hold the same filter top and bottom (flat), and PGR2's pre filter is a
+    peak that follows the engine (about +3.5 dB at 800 Hz to +6 dB at 220 Hz). The effect code segments are not DSP56300
+    words as stored (top bytes random): scrambled; the library's upload (0x1EB7DC) would show how. Engine voices send
+    to their bin at 0 mB while their speaker bins are -1000 mB and below: adding the distortion path at full level
+    (tanh drive, 2026-11-07) made a race 5-10x louder and clipped, so it was taken out.
   - **[PGR2]** Reverb: mix bin 10 is the reverb send (about 200 voice setups, mostly -2000 to -3000 mB).
     IDirectSound_SetI3DL2Listener from 0x12E810 and 0x12EB35 with presets at 0x28F788 (48 bytes, DSI3DL2LISTENER):
     0 off (room -10000), 1 (room -1000, decay 1.49 s, HF ratio 0.54, reflections -2560 mB at 0.162 s, reverb -613 mB
