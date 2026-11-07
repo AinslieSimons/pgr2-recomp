@@ -192,15 +192,6 @@ frame at 3440x1440.
 
 - **Scaling filter** is a small gain: Sharp is a little crisper than Bilinear. It does nothing at 100%.
 
-<p align="center">
-  <img src="docs/images/pgr2-settings-world.webp" alt="A number plate with enhanced world textures off and on" width="800">
-  <br>
-  <i>Enhanced world textures, enlarged three times.</i>
-</p>
-
-- **Enhanced world textures** only smooths the texture's pixels and adds no detail, and it can cause hitches of a quarter
-  of a second. Best left off.
-
 ## Features
 
 ### Display
@@ -220,6 +211,7 @@ frame at 3440x1440.
 - **Field of View** - Widens or narrows the race cameras, 50% to 200% of the console's.
 - **Console Accurate Depth** - W-buffered depth as the Xbox does it, keeping car bodies, showroom cars and street lights right.
 - **Reflections** - Car paint and glass reflections from the game's environment cube.
+- **Water reflections** - Water mirrors the city and cars around it, rather than a fixed picture of the city (Water Reflections, on by default). Not on the console. Windows untested.
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble. Any console input can be mapped to any controller input.

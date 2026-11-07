@@ -11,8 +11,8 @@ headless Linux VM; this port adds a third platform.
 | Window and main loop (`runtime/mac/main.mm`, SDL3) | Works |
 | Renderer (`runtime/gpu/metal.mm`, `runtime/gpu/msl.cpp`) | Menus, movies and races draw; see the gaps below |
 | Keyboard | Played by hand |
-| Controllers | Written (SDL3), never tried with a controller |
-| Audio (SDL3) | Output opens; nobody has listened to it |
+| Controllers | Played by hand; rumble and hot plugging not checked |
+| Audio (SDL3) | Works, checked by ear |
 | F1 settings window | Draws; its mouse and keyboard handling is untried |
 | Steering wheels | Stubbed: `core/wheel.cpp` needs DirectInput |
 | `.app` bundle, launcher | Not started |
@@ -61,7 +61,12 @@ derived from the game. Archives are also specific to a GPU family and OS, so the
 
 `src/game/car_shadows.cpp`, the `cpu_car_shadows` setting (on by default, F1 > Game). The console draws one depth map and one
 ground mesh (`0x21920`), for the followed car, and gives every car a texture blob (`0x32AB0`). This draws the map and the mesh
-for each other car in view as well, and the followed car last.
+for each other car in view as well: the followed car's mesh first, the others nearest first, then the followed car's map again.
+Overlapping shadows take one darkening: `src/game/draw_filter.cpp` gives each shadow draw a stencil mark that later ones skip.
+
+## Water reflections
+
+`src/game/planar_water.cpp`, the `planar_water` setting (on by default, F1 > Game): the scene is drawn a second time, mirrored, where water reaches the renderer. FINDINGS.md, "Water reflections", has the method and costs.
 
 ## What changed for macOS
 

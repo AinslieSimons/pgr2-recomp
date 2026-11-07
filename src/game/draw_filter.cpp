@@ -17,6 +17,7 @@
 namespace pgr2 {
 extern bool dlc, cpu_car_shadows;  // src/common/game_info.cpp
 extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
+void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust);  // src/game/planar_water.cpp
 }
 
 namespace {
@@ -136,6 +137,8 @@ OneShadowEach g_one_shadow;
 
 void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
     g_one_shadow.Filter(s);
+    pgr2::WaterDraw(s, adjust);
+    if (adjust.skip) return;
     if (g_trace_shadow) TraceShadow(s);
     if (g_skip_error_material && s.ps && s.simple[gpu::kMPsConstant0 >> 2] == kErrorMagenta) {
         static std::atomic<int> said{0};

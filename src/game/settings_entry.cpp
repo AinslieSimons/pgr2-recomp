@@ -36,7 +36,7 @@ extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail;
+extern bool mirror_detail, full_textures, tree_detail, planar_water;
 
 namespace {
 
@@ -149,9 +149,6 @@ const std::vector<Row> kPicture = {
      [] { return Choices{u"Game", u"2x", u"4x", u"8x", u"16x"}; },
      [] { return Nearest(kAniso, app::Get().aniso); },
      [](uint32_t i) { app::Get().aniso = kAniso[i]; }},
-    {u"World Textures", u"Doubled in the background. Can cause big hitches.", OnOff,
-     [] { return uint32_t(app::Get().world_textures); },
-     [](uint32_t i) { app::Get().world_textures = i != 0; }},
     {u"Sharp Text and HUD", u"Menus, text and the HUD drawn crisp at high resolutions.", OnOff,
      [] { return uint32_t(app::Get().sharp_2d); },
      [](uint32_t i) { app::Get().sharp_2d = i != 0; }},
@@ -167,6 +164,9 @@ const std::vector<Row> kPicture = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(tree_detail); },
      [](uint32_t i) { tree_detail = i != 0; }},
+    {u"Water Reflections", u"Water mirrors the city and cars around it. May cost frame rate near water.", OnOff,
+     [] { return uint32_t(planar_water); },
+     [](uint32_t i) { planar_water = i != 0; }},
     {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
      [] { return uint32_t(full_textures); },
      [](uint32_t i) { full_textures = i != 0; }},

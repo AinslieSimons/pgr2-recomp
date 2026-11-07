@@ -13,7 +13,7 @@ void InstallDrawFilter();  // src/game/draw_filter.cpp
 namespace pgr2 {
 extern bool skip_intro, hide_hud, dlc, cpu_car_shadows;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail;
+extern bool mirror_detail, full_textures, tree_detail, planar_water;
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -52,6 +52,7 @@ void Init() {
     if (const char* e = std::getenv("PGR2_MIRROR_DETAIL"); e) pgr2::mirror_detail = *e == '1';
     if (const char* e = std::getenv("PGR2_FULL_TEXTURES"); e) pgr2::full_textures = *e == '1';
     if (const char* e = std::getenv("PGR2_TREE_DETAIL"); e) pgr2::tree_detail = *e == '1';
+    if (const char* e = std::getenv("PGR2_PLANAR_WATER"); e) pgr2::planar_water = *e == '1';
     InstallDrawFilter();  // after the options: the DLC setting picks its part
     pgr2::RaiseFrameCap();
 }
@@ -67,6 +68,7 @@ uint32_t draw_distance_percent = 100;  // how far the race cameras see, percent 
 uint32_t car_detail = 2;  // 0 the console's, 1 high, 2 highest (src/game/detail.cpp)
 bool mirror_detail = true;  // the mirror sees and draws as the main view does (src/game/detail.cpp)
 bool tree_detail = true;  // trees at full detail at any distance (src/game/detail.cpp)
+bool planar_water = true;  // water reflects the world in its plane (src/game/planar_water.cpp)
 bool full_textures = true;  // every streamed texture at its full size from the city load (src/game/full_textures.cpp)
 bool dlc = false;  // the Xbox Live city packs in T:\$C, on the disc's game (src/game/dlc.cpp)
 }
@@ -98,6 +100,8 @@ const app::GameInfo app::kGame = {
                  "On by default: the mirror sees as far and draws as much as the main view; may cost frame rate on slower machines in the views with a mirror; at once."},
                 {"tree_detail", &pgr2::tree_detail, nullptr, "Full tree detail",
                  "On by default: trees keep all their leaves and their fullest shape at any distance; may cost frame rate where there are many; at once."},
+                {"planar_water", &pgr2::planar_water, nullptr, "Water reflections",
+                 "On by default: water mirrors the city and cars around it, rather than a fixed picture of the city; draws the scene a second time where water is in view, so may cost frame rate there; at once."},
                 {"full_textures", &pgr2::full_textures, nullptr, "Full size textures",
                  "On by default: every city texture at full size from the start of a race, rather than the small version until you are near; uses up to 60 MB more memory; from the next race."},
                 {"race_fps", nullptr, &pgr2::race_fps, "Race frame rate",

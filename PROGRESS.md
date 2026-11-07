@@ -37,6 +37,14 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-07 - Enhanced World Textures removed
+Removed as decided after the 2026-11-01 entries: it only smoothed texels (no detail) and gave 130-316 ms stalls on Harry's PC. Gone: the game's "World Textures" row, the SDK's F1 row, `Settings::world_textures` (an old `world_textures` key in a settings file is now ignored), `SharpenWorld` in all three renderers, and the sampled hash only it used. Kept: Sharp Text and HUD (`Sharpen2D`), the picture budget spread over frames (it serves every replacement), and `UpscaleEdgeDirected2x`, which only `sdk/tools/filter_preview` uses now. README's world comparison and its image removed. Next: none.
+
+### 2026-11-06 - planar reflections on water
+New: `src/game/planar_water.cpp`, on by default (`planar_water`, Recomp > Picture "Water Reflections", `PGR2_PLANAR_WATER=0`). Details and numbers in FINDINGS.md, "Water reflections". SDK: `DrawAdjust` carries the draw and a stage 3 texture for it; shader mode 0xC reads a 2D stage 3 as a planar reflection (D3D12, D3D11, Metal, reference); the render thread's header ring goes from 1 MB to 16 MB; `REF_FLAT` logs each draw's box, which is how the water was found. `PGR2_WATER_CAM="x y z yaw pitch"` stands the main camera somewhere for testing. Correction: "camera kind 3" is not a planar reflection, and FINDINGS and the probe now say so.
+
+Evidence: Metal, Sydney, the Opera House and the shore mirrored in rippled water at 30 fps from a test camera at -560 12 -205. Route 115 in normal play holds 30 with the pass running. Reference renderer: the Opera House and the bridge mirrored, against a run with it off. Harness, final code: `SMOKE OK`; routes 115, 93, 11 and 98 for 480 s each, over 10,000 passes each, no crashes or traps (an earlier smoke run found the shared test slots, FINDINGS.md). Open: a test camera at -1000 12 -200 facing the city drops from 30 to 17.5 fps, cause unknown; whether a road reaches such a view is not known. Not run: Windows (D3D12 and D3D11 not even compiled), 60 fps, MSAA, night, replays, split screen, other cities on Metal. Ripple strength (0.15, 0.4) was picked by eye on one view. Next: Windows, then the 17.5 fps view.
+
 ### 2026-11-06 - freeze at a race's end and the replay screen, on Metal
 No crash report, clean exit when the window closed. `sample` of a frozen Metal run: guest 14 at 100% in 0x114CC0, called for each of 4000 light tests from 0x187DC0, polling GetVisibilityTestResult (0x1C3610) for a report that never came. sdk `metal.mm`: Flush waited only for a buffer it committed itself, so a report on an earlier buffer stayed pending, and the game no longer presented to get another flush. It now waits for the newest committed buffer. Confirmed in a real race on Metal: replay works. Harness (no Metal, never froze): viewing a replay and pressing through Save ran, `Replay.193` written. D3D11 and D3D12 unchanged, untested.
 

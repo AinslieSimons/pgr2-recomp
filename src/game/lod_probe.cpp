@@ -2,7 +2,7 @@
 // measuring tool for the visuals work; with the variable unset each hook is one test and the original.
 // Addresses and what they mean (found in the disassembly):
 //   camera [0x3CD804]: +0x10 viewer (its +0x128 is the view mode), +0x14 mirrored, +0x18 far, +0x20 object range multiplier,
-//     +0x30 viewport width, +0x40 kind: 0 main, 1 mirror, 2 reflection cube, 3 planar reflection, +0xE0 position, +0x130 scale
+//     +0x30 viewport width, +0x40 kind: 0 main, 1 mirror, 2 reflection cube, 3 the light pool (no reflection, despite its plane), +0xE0 position, +0x130 scale
 //   car: +0x44 position, +0xA4 radius, +0x15D0 detail level (written by 0x3215D for the camera being drawn)
 //   texture block 0x3F2D38 + i * 0x18: +0 D3D header in use, +8 flags (0x80 streamed, 4 full version here, 2 being read),
 //     +0x10 low byte the full version's size (log2, width and height nibbles); count 0x3F2D38 + 0xBB80
@@ -42,7 +42,7 @@ using kernel::R32;
 
 constexpr uint32_t kCamera = 0x3CD804, kBlocks = 0x3F2D38, kBlockStride = 0x18, kCache = 0x28F5F0, kCity = 0x436D90;
 constexpr int kKinds = 4, kBinMetres = 25, kBins = 16, kLevels = 16;
-const char* const kKindName[kKinds] = {"main", "mirror", "cube", "planar"};
+const char* const kKindName[kKinds] = {"main", "mirror", "cube", "pool"};
 
 bool On() {
     static const bool on = [] { const char* e = std::getenv("PGR2_LOD_PROBE"); return e && *e == '1'; }();

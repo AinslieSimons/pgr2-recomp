@@ -574,6 +574,9 @@ X86_FUNC(sub_000314E0) {
     __imp__sub_000314E0(ctx, base);
 }
 
+namespace pgr2 {
+void WaterBeforeView(X86Context& ctx);  // src/game/planar_water.cpp
+}
 // the race view's drawing (0x17FCC0, ecx the view, [4] its camera): flares and other effects are skipped when the
 // camera's mode +0x128 is 12 and 0x291A27 is not -1. PGR2_FLARE_LOG=1 logs those when they change
 X86_EXTERN_FUNC(__imp__sub_0017FCC0);
@@ -588,6 +591,7 @@ X86_FUNC(sub_0017FCC0) {
     // PGR2_FLARES=1 (experiment): 0x291A27 -1, so the flare pass runs in camera mode 12 as in the other views
     static const bool flares = std::getenv("PGR2_FLARES") != nullptr;
     if (flares) kernel::G<uint8_t>(0x291A27) = 0xFF;
+    pgr2::WaterBeforeView(ctx);
     __imp__sub_0017FCC0(ctx, base);
 }
 
