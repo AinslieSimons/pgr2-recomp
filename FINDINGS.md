@@ -183,6 +183,12 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
 - **[PGR2] Trees** take detail from size on screen (0x49780, pixels), not from a level per tree: 0x49F30 draws size x 0.0025 (at most 1) of the mesh's leaf points, limited by the range +0x12 and 300 (0x49B40, the game's only point list call), with a fuller shader past 0.5, and nothing below the int 0x2DF470. 0x49E70 picks one of 6 mesh levels from the table 0x2DF324..0x2DF374, largest first. `src/game/detail.cpp` reports a larger size.
 - **[PGR2] Hood and bumper views** (0x179E90 false, view mode 4): 0x1D0C0 clears the shadow map (0x188C20) for the car it sits on instead of drawing it; the mesh pass 0x21920 still runs.
 - **[PGR2] Reflections** (2026-11-06, harness draw lists with each shader's texture modes, Yokohama, Sydney, Chicago; stage 3 is sampled when its mode is not 0, stale bindings otherwise fill the list): the followed car's paint and glass sample the live 256x256 R5G6B5 cube; other 512x512 car textures sample a 256x256 DXT1 cube, read as each city's `FixedCubeMap` (the disc has it in all but the garage), as do world objects with a stage 3 reflection, scaled by the texture's alpha. Modes (1, 17, 17, 12) are bump-mapped reflection on the same cube, about 1300 to 2500 vertices a frame. Water is the level use of modes (1, 17, 17, 12), shader B0001C51/B0001FA0 in the runs measured: y -0.177 in Sydney (city 9), 2.0 in city 7, -5.497 in city 4, -4.790 in the smoke test's race; the same modes also draw things that are not level, so the filter tests the vertices. Not reflection: stage 3's 256x256 L8 target is the light pool; a 128x128 L8 and a 128x128 R5G6B5 are unidentified.
+- **[PGR2] Which cube each car reads** (2026-11-07, per draw: stage 3's texture and kRsPsTextureModes). The followed car's
+  draws bind the live cube (D3DFMT 5, R5G6B5 swizzled; 128x128 as the game describes it); every other car binds the
+  city's FixedCubeMap (DXT1, 256x256), as do world objects. Car draws are told by their texture modes: paint 0x8401 (other
+  cars) and 0x8421, glass and lights 0x8021, other parts 0x0421; world objects with the fixed cube use 0x0001, 0x0021,
+  0x8001 and water 0x64621. The cube pass draws no car (no 512x512 car texture in any face): no car reflects any car.
+  `src/game/car_reflections.cpp` (`car_reflections`, on by default) gives other cars' draws the live cube.
 
 ## Water reflections
 

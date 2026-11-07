@@ -36,7 +36,7 @@ extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail, planar_water;
+extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections;
 
 namespace {
 
@@ -167,6 +167,9 @@ const std::vector<Row> kPicture = {
     {u"Water Reflections", u"Water mirrors the city and cars around it. May cost frame rate near water.", OnOff,
      [] { return uint32_t(planar_water); },
      [](uint32_t i) { planar_water = i != 0; }},
+    {u"Car Reflections", u"Other cars reflect the street as yours does, not a fixed picture.", OnOff,
+     [] { return uint32_t(car_reflections); },
+     [](uint32_t i) { car_reflections = i != 0; }},
     {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
      [] { return uint32_t(full_textures); },
      [](uint32_t i) { full_textures = i != 0; }},

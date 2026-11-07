@@ -37,6 +37,10 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-07 - every car reflects the live cube
+`src/game/car_reflections.cpp`, on by default (`car_reflections`, Recomp > Picture "Car Reflections", `PGR2_CAR_REFLECTIONS=0`): a car draw (texture modes 0x8401, 0x8421, 0x8021, 0x0421) whose stage 3 is a DXT1 cube, the city's FixedCubeMap, takes the live cube the followed car's draws bind (gpu::DrawAdjust::stage3). All other cars, at any distance: the cube is drawn at the followed car, and a cut-off would make a car's reflection jump between the two. Step 1 of the car reflections plan (report 2026-11-07: steps 2 cars in the cube, 3 a sharper and longer-reaching cube, 4 a cube per car, 5 self-reflections by screen space or ray tracing).
+Evidence: headless race, the log's swap line in the attract demo and the race (live cube 0059C4B0 then 005DF180, a new one per race). Metal, Sydney route 115: a race with it runs; a CPU car beside the player seen, in shadow, so no clear before and after picture (Instant Action picks a random city headless, and the Metal runs do not repeat frame for frame). Seen in play on the Mac: looks good.
+
 ### 2026-11-07 - sound effects, phase 3 (engine distortion): stopped, routing unknown
 Tried and taken out (nothing kept in code). The 11 parameters are a gain and two biquads (FINDINGS.md); the image's effect states route bins 11-18 into effects 0-7, whose outputs go to DSP buffers no effect reads. The DSP code is scrambled, so neither the drive curve nor the output level is known. Engine voices send 0 mB to their bin with speaker bins at -1000 mB and below, and the mixer had only played those sends for voices with no audible speaker bin. A host distortion (game's pre filter, tanh(d x) / d with d = 4 x gain, game's post filter) added at full level made the headless race 5-10x louder in RMS and clipped 190955 samples. Next, if wanted: how DownloadEffectsImage (0x1EB7DC) unscrambles the code, then reading the DSP56300 code for the drive stage and the output mix; or a mild drive on the engine's direct sound, set by ear.
 
