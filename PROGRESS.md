@@ -37,6 +37,10 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-07 - Metal applies the sampler LOD bias
+`metal.mm`: a sampler takes the title's bias through `MTLSamplerDescriptor.lodBias` (macOS 26 and later; earlier versions log once that it is left out), as D3D does. Step 1 of the 2026-11-06 visuals plan.
+Evidence: the biases seen on Metal are -2 (menus), -3 (cars) and -1 (city), on linear and on 16x anisotropic samplers. A forced +4 blurred everything, so the field works. Route 115, 1920x1080, render 100%, 16x filtering, same frames with and without: menu frames identical, race frames 2 to 6% more edge contrast (distant buildings and signs). At render 300% no difference: the textures are already at their top level. Windows unchanged. Smoke not run (headless does not use Metal).
+
 ### 2026-11-07 - Enhanced World Textures removed
 Removed as decided after the 2026-11-01 entries: it only smoothed texels (no detail) and gave 130-316 ms stalls on Harry's PC. Gone: the game's "World Textures" row, the SDK's F1 row, `Settings::world_textures` (an old `world_textures` key in a settings file is now ignored), `SharpenWorld` in all three renderers, and the sampled hash only it used. Kept: Sharp Text and HUD (`Sharpen2D`), the picture budget spread over frames (it serves every replacement), and `UpscaleEdgeDirected2x`, which only `sdk/tools/filter_preview` uses now. README's world comparison and its image removed. Next: none.
 

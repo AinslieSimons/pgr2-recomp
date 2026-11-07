@@ -19,8 +19,8 @@ headless Linux VM; this port adds a third platform.
 
 ### Renderer gaps
 
-MSAA and SMAA are ignored (logged once), a sampler's LOD bias is not applied, border colours snap to the nearest of
-Metal's three, and depth bias is only approximate on `Depth32Float_Stencil8`. A question the game would ask on Windows
+MSAA and SMAA are ignored (logged once), a sampler's LOD bias is applied only on macOS 26 and later (`lodBias`), border
+colours snap to the nearest of Metal's three, and depth bias is only approximate on `Depth32Float_Stencil8`. A question the game would ask on Windows
 ("different release") is answered yes and logged.
 
 ## Build and play
@@ -94,7 +94,7 @@ Overlapping shadows take one darkening: `src/game/draw_filter.cpp` gives each sh
 
 1. Play it by hand: keyboard, a controller, sound, the F1 window.
 2. Compare frames with the Windows build, especially car reflections, which looked dark in the first captures.
-3. MSAA and SMAA, then the sampler LOD bias.
+3. MSAA and SMAA.
 4. A `.app` bundle built from the player's own disc, with files in Application Support.
 5. Soak tests for memory ordering: long races, saves, and system link against a Windows build.
 
