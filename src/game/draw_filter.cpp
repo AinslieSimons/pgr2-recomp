@@ -19,6 +19,7 @@ extern bool dlc, cpu_car_shadows;  // src/common/game_info.cpp
 extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
 void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust);          // src/game/planar_water.cpp
 void CarReflectionDraw(const gpu::State& s, gpu::DrawAdjust& adjust);  // src/game/car_reflections.cpp
+void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust);       // src/game/car_reflections.cpp
 }
 
 namespace {
@@ -141,6 +142,7 @@ void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
     pgr2::WaterDraw(s, adjust);
     if (adjust.skip) return;
     pgr2::CarReflectionDraw(s, adjust);
+    pgr2::CarTraceDraw(s, adjust);
     if (g_trace_shadow) TraceShadow(s);
     if (g_skip_error_material && s.ps && s.simple[gpu::kMPsConstant0 >> 2] == kErrorMagenta) {
         static std::atomic<int> said{0};

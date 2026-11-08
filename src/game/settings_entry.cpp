@@ -36,7 +36,7 @@ extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections;
+extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 
 namespace {
 
@@ -152,6 +152,12 @@ const std::vector<Row> kPicture = {
     {u"Sharp Text and HUD", u"Menus, text and the HUD drawn crisp at high resolutions.", OnOff,
      [] { return uint32_t(app::Get().sharp_2d); },
      [](uint32_t i) { app::Get().sharp_2d = i != 0; }},
+    {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
+     [] { return uint32_t(full_textures); },
+     [](uint32_t i) { full_textures = i != 0; }},
+};
+
+const std::vector<Row> kDetail = {
     {u"Car Detail", u"How far other cars keep their full shape.",
      [] { return Choices{u"Console", u"High", u"Highest"}; },
      [] { return std::min<uint32_t>(car_detail, 2); },
@@ -170,9 +176,14 @@ const std::vector<Row> kPicture = {
     {u"Car Reflections", u"Other cars reflect the street as yours does, not a fixed picture.", OnOff,
      [] { return uint32_t(car_reflections); },
      [](uint32_t i) { car_reflections = i != 0; }},
-    {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
-     [] { return uint32_t(full_textures); },
-     [](uint32_t i) { full_textures = i != 0; }},
+    {u"Cars in Reflections", u"Your car reflects the cars around it. May cost frame rate.", OnOff,
+     [] { return uint32_t(cars_in_reflections); },
+     [](uint32_t i) { cars_in_reflections = i != 0; }},
+#ifdef __APPLE__
+    {u"Ray Traced Reflections", u"Cars reflect each other by ray tracing. May cost frame rate.", OnOff,
+     [] { return uint32_t(traced_reflections); },
+     [](uint32_t i) { traced_reflections = i != 0; }},
+#endif
 };
 
 const std::vector<Row> kPerformance = {
@@ -371,7 +382,8 @@ struct Section {
     const std::vector<Row>* rows;
 };
 const Section kSections[] = {
-    {u"Picture", u"Anti-aliasing, sharpening, textures and detail.", &kPicture},
+    {u"Picture", u"Anti-aliasing, sharpening and textures.", &kPicture},
+    {u"Detail", u"Car, mirror and tree detail, and reflections.", &kDetail},
 #ifdef __APPLE__
     {u"Performance", u"Render scale and frame cap.", &kPerformance},
 #else
@@ -385,6 +397,7 @@ const Section kSections[] = {
 constexpr int kSectionCount = int(std::size(kSections));
 constexpr int kBindingsRow = kSectionCount, kQuitRow = kSectionCount + 1, kLandingRows = kSectionCount + 2;
 constexpr int kMaxRows = 10;
+static_assert(kLandingRows <= kMaxRows, "the landing page has more rows than the menu holds");
 
 uint32_t g_vars = 0;               // the rows' ints in guest memory
 uint32_t g_shown[kMaxRows];        // what each held when last looked at
@@ -442,7 +455,8 @@ void Build(X86Context& ctx, int focus, uint32_t port) {
     using kernel::CallGuest;
     if (!g_vars) g_vars = mem::AllocSystem(4 * kMaxRows);
     g_page = g_section >= 0 ? kSections[g_section].rows : nullptr;
-    int count = g_page ? int(g_page->size()) : kLandingRows;
+    // the rows' arrays and the screen hold kMaxRows: a longer page is cut (the pages are written to fit)
+    int count = std::min(g_page ? int(g_page->size()) : kLandingRows, kMaxRows);
     for (int i = 0; i < count; i++) {
         g_shown[i] = g_page ? (*g_page)[size_t(i)].get() : 0;
         kernel::W32(g_vars + i * 4, g_shown[i]);
@@ -543,7 +557,7 @@ void ApplySettingsEntry() {
         }
         return;
     }
-    for (size_t i = 0; i < g_page->size(); i++) {
+    for (size_t i = 0; i < g_page->size() && i < size_t(kMaxRows); i++) {
         const Row& r = (*g_page)[i];
         uint32_t var = kernel::R32(g_vars + uint32_t(i) * 4);
         if (var != g_shown[i] && var < r.choices().size()) {

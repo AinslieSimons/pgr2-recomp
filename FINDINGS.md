@@ -189,6 +189,15 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   cars) and 0x8421, glass and lights 0x8021, other parts 0x0421; world objects with the fixed cube use 0x0001, 0x0021,
   0x8001 and water 0x64621. The cube pass draws no car (no 512x512 car texture in any face): no car reflects any car.
   `src/game/car_reflections.cpp` (`car_reflections`, on by default) gives other cars' draws the live cube.
+- **[PGR2] The cube pass and the cars.** The cube pass (0x180040) draws each face's world (0x117C40) and flushes the
+  frame's draw lists (0x186B20, thiscall, the camera); the main view also has the car manager 0x297390 queue its cars
+  (0x32010) before its flush, and later their other parts (0x32D10, 0x32AB0, 0x314E0). Cars: count at +0x0C, from
+  +0x1C00, 0x6990 apart; 0x1C900 (thiscall, the car, al) says whether one is drawn, and like 0x32010 reads the camera
+  being drawn at 0x3CD804 (holder 0x3B59C0 + 0x17E44) and its viewer's followed car (+0x10, then +0x140; view mode +0x128
+  0xC follows none). `cars_in_reflections` (on by default) queues the cars at the cube camera's flush with the followed car
+  refused by 0x1C900: 5 to 17 car draws a face, 67 a frame in the race measured. An override that returns early must
+  pop the return address as the guest's ret does (ctx.esp += 4 for a plain ret): without it 0x32010 read its stack 4
+  bytes off and faulted at guest address 0xC.
 
 ## Water reflections
 

@@ -219,6 +219,7 @@ X86_FUNC(sub_00188550) {
     if (camera && camera == g_camera) {
         SetMirrorView(ctx);
         ctx.ecx = camera;
+        ctx.esp += 4;  // ret: the caller's stack as the function's own return leaves it
         return;
     }
     __imp__sub_00188550(ctx, base);
@@ -260,6 +261,13 @@ void WaterBeforeView(X86Context& ctx) {
 namespace pgr2 {
 
 // the draw filter's part: a water draw reads the reflection in place of its cube
+// a draw into the water's reflection: the scene drawn mirrored in the water's plane (src/game/car_reflections.cpp leaves it
+// out of the traced scene)
+bool InWaterReflection(const gpu::State& s) {
+    const uint32_t target = g_target_data.load(std::memory_order_relaxed);
+    return target && s.rt.data == target;
+}
+
 void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
     if (s.rs[gpu::kRsPsTextureModes] != kWaterModes || !planar_water) return;
     if (s.rt.data && s.rt.data == g_target_data.load(std::memory_order_relaxed)) {
