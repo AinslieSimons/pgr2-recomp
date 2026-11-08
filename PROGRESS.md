@@ -210,6 +210,107 @@ setting or timing caused that is unknown. Not measured: a small cache city, Meta
 from about 150 s to 240 s of the run, then against a barrier, so the moving sample is short. Logs and reference frames (CPU renderer,
 640x480, not Metal) in `.local/lodbase`. Results are in FINDINGS.md, "Level of detail". Not measured: a city with a small texture
 cache, and the look of any change. Next: ask for textures farther out and compare; car and mirror settings.
+### 2026-11-07 - Cube face shrinks reuse textures, on fork main (branch shrink-pool, PGR2 and SDK)
+The render-mt finding without its timers and experiments, on fork main 5bcd974 (render-mt sits on the all-games candidate):
+D3D12's cube face shrinks reuse a finished frame's shrunk copies (a pool); D3D11 keeps one per size with its view (its
+context orders the copy before the next shrink). Harry's D3D12 result on render-mt: busy seconds 84-91 to 108-113 fps.
+Harry on Windows (bed8ba8): D3D12 busy seconds 108.9 fps (host 7.9 ms, 2545 draws/frame; baseline 84, 11.3), D3D11 clean,
+reflections right in both. Six-game gate on 77b18eb (EoN and PGR1 with DropGarbage then RecycleShrinks): all smoke
+OK, PGR1's repro.sh a live race. Fork main fast-forwarded to 77b18eb. The remaining dips
+(about 5000 draws a frame) are next on render-mt: parallel command recording.
+
+### 2026-11-07 - release-package.bat finds prebuilt-test.bat by its own folder
+Making 1.6.1's package on the Windows VM, `call prebuilt-test.bat` failed in a shell with NoDefaultCurrentDirectoryInExePath
+set (cmd then does not look in the current folder); now `call "%~dp0prebuilt-test.bat"`.
+
+### 2026-11-07 - Release 1.6.1
+Notes in docs/releases/v1.6.1.md: ultrawide by default and the live 16:9 / fill switch (issue 33), issues 26, 28, 30,
+32, all confirmed on Harry's PC. SDK at the fork's main 5bcd974. A tag makes a draft: Harry builds PGR2-package.zip
+(build.bat, release-package.bat), attaches it and its .json, and publishes. Next: render thread throughput (stutter at 120).
+
+### 2026-11-07 - Issue 28: Washington's dome see-through, a likely cause (branch fixes-1.6.1; SDK pgr2-1.6.1)
+- A player's screenshot: the Capitol dome's surface missing (sky through it), only its windows drawn. Headless, Time
+  Attack on route 1 (Washington routes are 0 to 9 in Routes.Ini; PGR2_ROUTE takes in Time Attack, not Instant Action,
+  which picks its own): the reference renderer draws the dome whole, DLC on or off (the error material filter leaves out
+  nothing there). So the Windows renderers.
+- Washington's alpha tested draws (logged headless): all greater-or-equal (0x206), 35 references, 0 among them.
+  Smooth alpha edges (alpha to coverage, gpu shaders.cpp alphacover) discarded alpha 0 texels whatever the test, though
+  greater-or-equal 0 passes them: SDK 1a68cd2 gives that test full coverage. Not proven to be the dome: Harry to look at
+  Washington with Smooth Alpha Edges on and MSAA on, before and after.
+
+### 2026-11-07 - Issue 32: the Recomp page from the pause menu keeps the pause frame (branch fixes-1.6.1)
+- Player: Recomp from the pause menu does not dim the race, white text on bright sky. Headless, a race paused: the pause
+  menu, its Options page and the Sound page (rows, as ours) keep the pause frame (the race dimmed with scan lines, PAUSE
+  MENU and its red lines); Recomp lost it, and so does the game's own Restart Race? dialog.
+- Each pause page makes an object of vtable 0x27953C with the page objects' allocator 0x4E5F0 on [0x2F4CC4], a row of the
+  page at +0x30 (0x8F820, 0x8ED10, 0x8D660, 0x8DF70). The Recomp page from the pause menu now makes one: frame kept on the
+  landing page and the sections; a setting changed, Back twice to the pause menu, B resumes; no errors.
+
+### 2026-11-06 - Issues 30 and 26: speed camera photo, intro movies pillarboxed (branch fixes-1.6.1; SDK pgr2-1.6.1)
+- 30, the speed camera photo grey: 0x16E960 locks the frame, aliases it as a texture and draws it shrunk into the photo
+  (160x120, 32 bit) on the GPU; 0x16E670 locks the photo seconds later and copies it into the profile. The renderers'
+  read-back skipped any target unused for 8 frames (TargetStale), so grey went into the profile and the result page.
+  SDK 236e929: a long unused target is read back when its memory is as it last matched (not reused), up to 1 MB, logged.
+  Headless cannot show it (the reference renderer draws into guest memory). Windows to confirm.
+  Windows: still black. Logged (ca2a88e): the photo taken twice (both swap buffers), its guest memory zeros, no lock
+  before the result page, then "sampled target 81F89000 160x120 reloaded from guest memory": zeros over the GPU's photo.
+  Now 0x16E960 is followed by D3D_BlockOnResource (0x1C61C0) on the photo texture, the read-back a lock does, so guest
+  memory holds the photo before anything reloads or saves it.
+  Windows (8da2e96, 15f3054): the read-back now runs, but the photo is one flat colour (FF060404, then FF110B09; the
+  second take's alpha BF, the quad's diffuse alpha). The draw (0x16EF07..0x16EFA6): Begin(8), a pretransformed quad
+  0..640 x 0..480 (SetVertexShader 0x44: XYZRHW, diffuse) with pixel texture coordinates into the 160x120 photo target,
+  stage 0 the XGSetTextureHeader texture laid over the locked frame (the frame's own format, from GetDesc). The new
+  d3d12 "small target drawn from texture" log never fired: the draw's stage 0 never reached the target match, so the
+  renderer likely rejects that header (Describe) or takes the stage memo before it. Also open: the quad is four times
+  the photo's size; the console presumably scales it (a supersample or viewport setting not found yet).
+  Stopped after two fixes (stale read-back, read-back at once), both kept: they are needed once the draw works.
+  The d3d12 diagnostics used LOG_FIRST, info level, which a release build never writes: now LOGR_FIRST (report). Then
+  (6faf89b): the photo draw is found and binds the frame (83D86000 / 83EB3000, 640x480 guest, host 3440x1440) as a
+  target, and the read-back works, but the frame holds a flat near-black (070301). 0x16E960 sets the frame as target
+  (0x177B70), clears it black (0x177B50: 0xF3, 0xFF000000), renders the camera's view ([0x3B59C4] vtable +8), then
+  shrinks it: the camera view's draws do not reach that frame. Next: trace every draw and clear the function records
+  (gpu::g_trace_draws, switched on by the 0x16E960 hook).
+  Traced (a690bbb): clear F3 black into the frame, then 400 draws into it, all with viewport 0,0 160x120 (the camera's
+  view in the frame's top left corner), then the 640x480 quad into the 160x120 photo: only its top left 160x120 lands
+  there, the corner at 1:1, as designed. All in the right frame; the photo still near-black. Next: the frame's own
+  pixels as its lock read them back, inside and outside that corner.
+  Frame pixels (12fd0da): the corner holds the camera's (night) view, outside it black: the photo is one colour all
+  over, so the photo draw sampled one place. Its texture coordinates come from 0x1C0CB0, SetVertexData2s (method
+  0x1900 + register x 4, two shorts in one word), which the SDK's push reader (d3d8.cpp Walk) did not know: dropped,
+  every pixel read texel 0,0. SDK 670e174: the 2 and 4 short forms read like the others. Harry on Windows (adf400b):
+  "It's finally showing" (the car from behind, at night). Diagnostics taken out again (SDK da98c6d); kept: the read-back
+  right after the photo is drawn, the read-back of an unused target whose memory is unchanged, SDK LOGR_FIRST.
+- SDK pgr2-1.6.1 merged into fork main as 5bcd974 (with fork main 29bfd24) after the six-game gate from separate
+  folders (gate-pgr2.sh, smoke-ui-pgr2: a first run collided with the SDK session's gate in the shared folders); PGR1
+  on aspect-16x10 76dde10, EoN with eon-merge-main-1fd7e54; PGR1's repro.sh a live race.
+- Stutter (Harry, 120 in races): his logs show 1 to 3% of frames over 12.5 ms and a 75 to 140 ms hitch now and then,
+  as in v1.6.0. Headless at 120: the game locks only CPU-filled movie textures, about 25 a second, cheap; the hitches
+  need XBE_PERF on Windows. No quick fix for this release.
+- 26, intro movies stretched: the intros are 640x480 4:3 WMV drawn by the XMV player as one screen quad from a YUY2
+  texture (format 0x24). SDK State::pillar_aspect / pillar_format: full screen draws from that format squeezed whole to
+  4:3 on a wider frame; PGR2 sets 4:3 and YUY2 (hooks.cpp Pillarbox). Headless REF at 16:9 and 21:9: the intros
+  pillarboxed, the title unchanged. The title's car (title_new3.xmv, a 480x320 panel) narrowed in place showed hard edges
+  inside the vignette drawn over it at its old size, so it stays as the console's widescreen mode draws it. Upscaling:
+  the movies are 640x480 low bitrate WMV2; nothing to recover beyond the sharpening already there.
+
+### 2026-11-06 - Ultrawide by default (issue 33)
+Issue 33: on 3440x1440 the picture is stretched 16:9, not widened. Not the 16:10 work (that is on branch aspect-16x10, not
+in a release): reproduced by Harry on v1.6.0 built on the Windows VM (C:\Work\PGR2-v1.6.0). In 1.6.0 only "Fill the
+screen" widens the view; the default "From the screen's shape" is 16:9. And the setting is read live by the renderers
+(app::FrameAspect) and by ApplyAspect, while each camera keeps the aspect it was set up with (0x1857F0, +0x38): changed in
+play, the frame is shown at the new shape over views of the old one, stretched, until a restart (Harry's log flips
+2.389 and 1.778 with each change). PGR2 now sets GameInfo::auto_fills_screen: "From the screen's shape" widens to an
+ultrawide screen too (HUD kept 16:9). Harness cannot show it (its FrameAspect ignores the setting). Windows to confirm.
+SDK branch aspect-latch-1.6 (0da83f4, on the released 97b1654): the aspect choice kept from the start (as F1 says),
+so a change in play waits for a restart instead of stretching; the screen size stays live (the same as the SDK session's
+be36701 on aspect-16x10). Then Harry asked for live switching: SDK GameInfo::fill_follows_live (the current choice
+between 16:9 and fill, in a widescreen boot; 4:3 still at the next start), and PGR2 keeps each view it sets up from 0x2790F8
+(0x1857F0 boxes, the garage 0x88480, the full screen view 0x184530 with its save and restore) and reshapes them when the
+shape changes, the mirror's narrowing with them. Headless, the shape flipped every 10 s in a race: "2 views reshaped"
+each time, the mirror narrowed and back. Not covered: 0x16E960's small view. Harry on Windows (d83c7f3, 3440x1440):
+"Works as expected": the default fills, 16:9 and Fill switch live without stretching; 4:3 waits for a restart, as the row
+says. SDK: aspect-latch-1.6 merged into fork main as ad707e8 after the six-game gate (PGR1 with aspect-16x10, EoN with
+eon-merge-main-1fd7e54; PGR1's repro.sh a live race).
 
 ### 2026-11-03 - Release 1.6.0: the prebuilt model
 - Published by Harry from main 93de261 (SDK 97b1654): PGR2Launcher.exe 2.4 MB, PGR2-package.zip 73.3 MB (41 entries, PGR2.exe and the
