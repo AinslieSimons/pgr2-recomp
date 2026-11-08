@@ -45,6 +45,30 @@ remapping. Testing switches: `XBE_KEYS="seconds:vk:held ..."` presses keys by th
 Nth frame, `XBE_OPEN_SETTINGS=1` opens the settings window. `XBE_AUDIO_WAV=file` records what the mixer hands the output (16 bit stereo, 48 kHz, beside the executable). `tools/mslcheck` compiles a folder of shaders dumped by the
 harness's `AUDIT=N` through the translator.
 
+## Repeatable test runs
+
+`scripts/replay-test.sh` plays a recording of controller 1 in place of the controller, from a fixed start, so every run
+of a test sees the same menus, race and replay:
+
+1. `scripts/replay-test.sh snapshot` copies the saves, settings and shader cache of `build/macapp` to
+   `.local/replay/start`. Take it with the game shut, just before recording.
+2. `scripts/replay-test.sh record race` starts the game from that snapshot and records controller 1 (keyboard or pad) to
+   `.local/replay/race.pad` until you quit.
+3. `scripts/replay-test.sh play race [ENV=value ..]` starts again from a fresh copy of the snapshot with the recording
+   playing, until it ends. `SHOTS="read read .."` takes screenshots at those reads of the controller, the same frames in
+   every run (`SHOT_EVERY=N`: every N frames); the log, the sound (`XBE_AUDIO_WAV`) and `shot_NN.png` land in
+   `.local/replay/out`. An `ENV=value` changes one thing between runs, for example `PGR2_CAR_REFLECTIONS=0`.
+
+The usual test is `demos`: the five demo replays the game ships (Start Player's Game > Options > PGR 2 Demos: Hong
+Kong, Washington DC, Chicago, Florence, Barcelona), played in list order, with two screenshots in each from
+`.local/replay/demos.shots`. Two playbacks of it gave 8 of 10 screenshots identical to the pixel; Chicago's two differ
+only in tyre smoke, which the game makes at random. The demos do not play quite right at a race_fps of 60 (2026-11-07).
+
+The recording (`XBE_PAD_RECORD`, `XBE_PAD_PLAY`, `xdk/xapi.cpp`) is keyed to the game's own reads of the controller, once
+a frame, not to the clock, so a press lands on the same frame however long loading takes. The game must start from the
+same saves and settings it was recorded from, or a press lands on another menu item; and `race_fps` must match, as
+the race steps per frame. The headless harness takes the same variables.
+
 ## Dock app and shader cache
 
 `scripts/mac-app.sh` makes `~/Applications/PGR2 Test.app`. Opening it rebuilds what changed and starts `build/macapp/PGR2`.
