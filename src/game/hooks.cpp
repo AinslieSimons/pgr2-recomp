@@ -567,12 +567,18 @@ X86_FUNC(sub_00177C70) {
 // At 60 the car's reflection cube is the console's work twice over, about a third of a race's draws (the render thread
 // is what holds a race under 60: 3 us a draw). The pass (the loop at 0x180064, faces 0 to 5) asks 0x179290 (thiscall:
 // 0, the face), a stub that answers yes, whether to draw each face; a face it turns down keeps its picture. So each
-// pass draws every other face, and each face still changes 30 times a second, as on the console. PGR2_CUBE_ALL=1 draws
-// them all.
+// pass draws every other face, and each face still changes 30 times a second, as on the console. reflection_every_frame
+// (PGR2_CUBE_ALL=1) draws them all.
+namespace pgr2 { extern bool reflection_every_frame, g_extra_cube; }
 X86_FUNC(sub_00179290) {
-    static const bool all = std::getenv("PGR2_CUBE_ALL") != nullptr;
+    const bool all = pgr2::reflection_every_frame;
     static uint32_t pass = 0;
     uint32_t face = kernel::R32(ctx.esp + 8);
+    if (pgr2::g_extra_cube) {  // a car's own cube (src/game/car_reflections.cpp): every face, the count left alone
+        ctx.eax = 1;
+        ctx.esp += 12;
+        return;
+    }
     if (face == 0) pass++;
     // each face about 30 times a second: every other pass at 60, one in four at 120
     uint32_t every = std::max<uint32_t>((RaceHz() ? RaceHz() : 60) / 30, 2);

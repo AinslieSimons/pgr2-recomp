@@ -14,6 +14,8 @@ namespace pgr2 {
 extern bool skip_intro, hide_hud, dlc, cpu_car_shadows;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
+extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
+extern bool reflection_every_frame, car_cubes;
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -56,6 +58,12 @@ void Init() {
     if (const char* e = std::getenv("PGR2_CAR_REFLECTIONS"); e) pgr2::car_reflections = *e == '1';
     if (const char* e = std::getenv("PGR2_CARS_IN_REFLECTIONS"); e) pgr2::cars_in_reflections = *e == '1';
     if (const char* e = std::getenv("PGR2_TRACED_REFLECTIONS"); e) pgr2::traced_reflections = *e == '1';
+    if (const char* e = std::getenv("PGR2_REFLECTION_FAR"); e) pgr2::reflection_far = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_REFLECTION_RANGE"); e) pgr2::reflection_range = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_CUBE_ALL"); e) pgr2::reflection_every_frame = *e == '1';
+    if (const char* e = std::getenv("PGR2_CAR_CUBES"); e) pgr2::car_cubes = *e == '1';
+    if (const char* e = std::getenv("PGR2_TRACED_RANGE"); e) pgr2::traced_range = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
     InstallDrawFilter();  // after the options: the DLC setting picks its part
     pgr2::RaiseFrameCap();
 }
@@ -75,6 +83,12 @@ bool planar_water = true;  // water reflects the world in its plane (src/game/pl
 bool car_reflections = true;  // every car reflects the live cube, not only the followed one (src/game/car_reflections.cpp)
 bool cars_in_reflections = true;  // the reflection cube shows the other cars (src/game/car_reflections.cpp)
 bool traced_reflections = false;  // cars reflect each other by rays traced on the GPU, Metal (src/game/car_reflections.cpp)
+uint32_t reflection_far = 0;      // the reflection cube's far plane in metres, 0 the console's 30 (src/game/car_reflections.cpp)
+uint32_t reflection_range = 0;    // its object range: 0 the console's (a tenth), 1 three times, 2 ten times (the main view's)
+bool reflection_every_frame = true;   // every cube face every frame above 30, not each at 30 a second (src/game/hooks.cpp)
+bool car_cubes = true;            // a reflection cube of its own for every other car
+uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
+uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
 bool full_textures = true;  // every streamed texture at its full size from the city load (src/game/full_textures.cpp)
 bool dlc = false;  // the Xbox Live city packs in T:\$C, on the disc's game (src/game/dlc.cpp)
 }
@@ -114,6 +128,18 @@ const app::GameInfo app::kGame = {
                  "On by default: your car reflects the cars around it, which the console's reflections leave out; draws them into each reflection face, so may cost frame rate; at once."},
                 {"traced_reflections", &pgr2::traced_reflections, nullptr, "Ray traced car reflections",
                  "Off by default: cars reflect each other and their own mirrors and spoilers by rays traced on the GPU, the city still from its reflection cube; macOS (Metal) only; may cost frame rate; at once."},
+                {"reflection_far", nullptr, &pgr2::reflection_far, "Reflection cube distance (m)",
+                 "0 the console's (30 m): how far the reflection cube sees; more may cost frame rate; at once."},
+                {"reflection_range", nullptr, &pgr2::reflection_range, "Reflection cube object range",
+                 "0 the console's (a tenth of each object's own), 1 three times that, 2 ten times (the main view's); at once."},
+                {"reflection_every_frame", &pgr2::reflection_every_frame, nullptr, "Reflection cube every frame",
+                 "On by default: above 30 fps every face is redrawn every frame; off, each face 30 times a second as on the console (cheaper); at once."},
+                {"car_cubes", &pgr2::car_cubes, nullptr, "Every car reflects from where it is",
+                 "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
+                {"traced_range", nullptr, &pgr2::traced_range, "Ray traced cars range (m)",
+                 "400 by default: cars this close to the camera are in the ray traced scene; at once."},
+                {"traced_ray", nullptr, &pgr2::traced_ray, "Ray traced reflection length (m)",
+                 "60 by default: how far a traced reflection reaches; at once."},
                 {"full_textures", &pgr2::full_textures, nullptr, "Full size textures",
                  "On by default: every city texture at full size from the start of a race, rather than the small version until you are near; uses up to 60 MB more memory; from the next race."},
                 {"race_fps", nullptr, &pgr2::race_fps, "Race frame rate",

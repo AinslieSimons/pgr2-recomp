@@ -199,6 +199,14 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   pop the return address as the guest's ret does (ctx.esp += 4 for a plain ret): without it 0x32010 read its stack 4
   bytes off and faulted at guest address 0xC.
 
+- **[PGR2] The reflection cube's camera and object** (2026-11-08, read from the code). The camera holder 0x3B59C0 has
+  the cube camera at +0xBF30 (class table 0x27B780: update 0x185C50, draw 0x180040) and the light pool's camera at +0x10
+  (0x27B764: draw 0x180230). The update sets the far plane (+0x18) from the float 0x291A0C (30), the object range (+0x20)
+  from 0x275BA4 (0.1), the viewer from the main camera, and the place (+0xBEF8) to the followed car's raised by 0x275F58.
+  The draw renders each face of the cube object at +0xBEF4: 0x4862D0, made by 0x1788F0 (thiscall: depth surface, size
+  128, format 5; ret 0xC; cube texture at +0xA8, faces at +0x78, depth at +0xAC) and freed by 0x1786C0. A car's place is
+  its +0x44, the same as the translation of its draws' world rows (c110 to c112).
+
 ## Water reflections
 
 - **[PC] Planar reflections** (`src/game/planar_water.cpp`, `planar_water`, on by default). The main camera is copied, mirrored in the water's plane and drawn whole into a 640x480 target before the main view, and level draws with the water's modes read that target at their screen position, bent by the normal (`planar()` in `gpu/shaders.cpp`: mode 0xC with a 2D stage 3, which no console draw has). It runs only while water reached the renderer in the last 30 frames, and only for a full screen main camera; the mirror and split screen keep the cube.

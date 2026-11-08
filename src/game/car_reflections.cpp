@@ -32,6 +32,10 @@
 namespace pgr2 {
 
 extern bool car_reflections, cars_in_reflections, traced_reflections;  // src/common/game_info.cpp
+extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;  // src/common/game_info.cpp
+extern bool car_cubes;  // src/common/game_info.cpp
+bool g_extra_cube = false;  // a car's own cube being drawn (src/game/hooks.cpp draws its every face)
+bool CarCubeFor(const gpu::State& s, uint32_t& cube);  // below
 bool InWaterReflection(const gpu::State& s);  // src/game/planar_water.cpp
 
 namespace {
@@ -53,6 +57,7 @@ constexpr uint32_t kViewerMode = 0x128, kViewerCar = 0x140, kModeNoCar = 0x0C;  
 constexpr uint32_t kCarManager = 0x297390, kQueueCars = 0x32010;
 bool g_in_cube = false;   // the cube's cars being queued
 uint32_t g_left_out = 0;  // the followed car then
+uint32_t g_cube_car = 0;  // the car whose own cube is being drawn (car_cubes), left out of it
 
 }  // namespace
 
@@ -66,6 +71,12 @@ void CarReflectionDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
         return;
     }
     if (t.format != kFixedFormat) return;
+    // a car with a cube of its own (car_cubes) reads that
+    uint32_t own = 0;
+    if (CarCubeFor(s, own)) {
+        adjust.stage3 = own;
+        return;
+    }
     const uint32_t live = g_live.load(std::memory_order_relaxed);
     gpu::TextureDesc l;
     if (!live || !gpu::Describe(live, l) || !l.cube || l.format != kLiveFormat) return;  // none yet, or gone with its race
@@ -293,9 +304,10 @@ void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
     // into the scene once a frame
     bool again = false;
     for (const Drawn& d : g_this) again |= d.mesh == mesh && !std::memcmp(d.world.m, world.m, sizeof(world.m));
-    // a car far from the eye left out: the demos' and replays' long lenses watch a pack 100 m off and more, so only what
-    // no view sees close (400 m)
-    const bool near = world.m[3] * world.m[3] + world.m[7] * world.m[7] + world.m[11] * world.m[11] < 400.0f * 400.0f;
+    // a car far from the eye left out (traced_range, 400 m by default: the demos' and replays' long lenses watch a pack
+    // 100 m off and more)
+    const float reach = float(std::clamp<uint32_t>(traced_range, 20, 5000));
+    const bool near = world.m[3] * world.m[3] + world.m[7] * world.m[7] + world.m[11] * world.m[11] < reach * reach;
     if (!again && near) {
         adjust.trace_scene = true;
         adjust.trace_draw = uint32_t(g_this.size());
@@ -338,7 +350,7 @@ void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
     adjust.trace_reflect = true;
     std::memcpy(adjust.trace_from, from.m, sizeof(from.m));
     std::memcpy(adjust.trace_turn, turn.m, sizeof(turn.m));
-    adjust.trace_range[0] = 60.0f;  // metres
+    adjust.trace_range[0] = float(std::clamp<uint32_t>(traced_ray, 5, 1000));  // metres (traced_ray, 60 by default)
     adjust.trace_range[1] = 0.05f;
 }
 
@@ -349,7 +361,7 @@ X86_FUNC(sub_00186B20) {
     const uint32_t active = R32(kActiveCamera);
     if (pgr2::cars_in_reflections && !g_in_cube && active && R32(active + kCamKind) == kKindCube) {
         const uint32_t camera = ctx.ecx, viewer = R32(active + kCamViewer);
-        g_left_out = viewer && R32(viewer + kViewerMode) != kModeNoCar ? R32(viewer + kViewerCar) : 0;
+        g_left_out = g_cube_car ? g_cube_car : viewer && R32(viewer + kViewerMode) != kModeNoCar ? R32(viewer + kViewerCar) : 0;
         g_in_cube = true;
         ctx.ecx = kCarManager;
         kernel::CallGuest(ctx, kQueueCars, {});
@@ -357,6 +369,148 @@ X86_FUNC(sub_00186B20) {
         ctx.ecx = camera;
     }
     __imp__sub_00186B20(ctx, base);
+}
+
+// A cube of its own for every other car (car_cubes). The game makes one cube object (0x4862D0, 0xB4 bytes: six face
+// headers, the faces at +0x78, the cube texture at +0xA8, the depth surface at +0xAC) by 0x1788F0 (thiscall: depth,
+// size, format; ret 0xC) at a race's start and frees it by 0x1786C0. One more is made and freed with it for each car
+// slot. After the game's cube pass, the pass is run again for each other car with the cube camera's cube (+0xBEF4) and
+// place (+0xBEF8, the car's +0x44 raised as the game raises the followed car's) moved to that car, which is left out of
+// it, the followed car put in. A car's draws (found by their world rows' place, other cars' c[110] to c[112], which is
+// the car's +0x44) then read its own cube. Each costs about what the game's own cube does.
+namespace {
+constexpr uint32_t kGameCube = 0x4862D0, kMakeCube = 0x1788F0, kFreeCube = 0x1786C0, kCubeTexture = 0xA8, kCubeSize = 0xC0;
+constexpr uint32_t kCamCube = 0xBEF4, kCamAt = 0xBEF8, kCubeRaise = 0x275F58;
+constexpr uint32_t kCars = 0x297390, kCarCount = 0x0C, kCarFirst = 0x1C00, kCarStride = 0x6990, kCarAt = 0x44;
+constexpr uint32_t kSlots = 8;  // the car list's slots (a race has up to 8 cars)
+
+struct CarCube {
+    uint32_t object = 0;              // in guest memory (0 not yet)
+    std::atomic<uint32_t> texture{0};  // its cube texture once drawn this race, 0 none
+    std::atomic<uint32_t> at[3];       // the car's place (float bits) when it was drawn
+};
+CarCube g_cubes[kSlots];
+
+float GetF(uint32_t va) { float f; std::memcpy(&f, &kernel::G<uint32_t>(va), 4); return f; }
+void PutF(uint32_t va, float f) { std::memcpy(&kernel::G<uint32_t>(va), &f, 4); }
+
+void DrawCarCubes(X86Context& ctx, uint32_t cam) {
+    const uint32_t viewer = R32(cam + kCamViewer);
+    const uint32_t followed = viewer && R32(viewer + kViewerMode) != kModeNoCar ? R32(viewer + kViewerCar) : 0;
+    if (!followed) return;
+    uint32_t saved[4];
+    for (int i = 0; i < 4; i++) saved[i] = R32(cam + kCamCube + i * 4);
+    const uint32_t eax = ctx.eax, ecx = ctx.ecx, edx = ctx.edx;
+    const uint32_t count = std::min<uint32_t>(R32(kCars + kCarCount), kSlots);
+    for (uint32_t k = 0; k < count; k++) {
+        CarCube& c = g_cubes[k];
+        const uint32_t car = kCars + kCarFirst + k * kCarStride;
+        if (car == followed || !c.object || !R32(c.object + kCubeTexture)) continue;
+        kernel::W32(cam + kCamCube, c.object);
+        for (int i = 0; i < 3; i++) PutF(cam + kCamAt + i * 4, GetF(car + kCarAt + i * 4) + (i == 1 ? GetF(kCubeRaise) : 0.0f));
+        g_cube_car = car;
+        g_extra_cube = true;
+        ctx.ecx = cam;
+        kernel::CallGuest(ctx, 0x180040, {});
+        g_extra_cube = false;
+        g_cube_car = 0;
+        for (int i = 0; i < 3; i++) c.at[i].store(R32(car + kCarAt + i * 4), std::memory_order_relaxed);
+        c.texture.store(R32(c.object + kCubeTexture), std::memory_order_release);
+    }
+    ctx.eax = eax, ctx.ecx = ecx, ctx.edx = edx;
+    for (int i = 0; i < 4; i++) kernel::W32(cam + kCamCube + i * 4, saved[i]);
+    static bool said = false;
+    if (!said) said = true, LOGR("pgr2: car cubes: a cube drawn at each of %u other cars", count ? count - 1 : 0);
+}
+}  // namespace
+
+// the draw filter's part: the cube of the car this draw is of (its world rows' place within a few metres of the car's)
+bool CarCubeFor(const gpu::State& s, uint32_t& cube) {
+    if (!car_cubes || !s.vs) return false;
+    float best = 4.0f * 4.0f;
+    cube = 0;
+    for (CarCube& c : g_cubes) {
+        const uint32_t tex = c.texture.load(std::memory_order_acquire);
+        if (!tex) continue;
+        float d = 0;
+        for (int r = 0; r < 3; r++) {
+            const uint32_t bits = c.at[r].load(std::memory_order_relaxed);
+            float at;
+            std::memcpy(&at, &bits, 4);
+            const float t = s.vsc[kAbsoluteRows + r][3] - at;
+            d += t * t;
+        }
+        if (d < best) best = d, cube = tex;
+    }
+    return cube != 0;
+}
+
+// the game's cube made at a race's start: one for each car slot too, the same
+X86_EXTERN_FUNC(__imp__sub_001788F0);
+X86_FUNC(sub_001788F0) {
+    const uint32_t self = ctx.ecx, depth = R32(ctx.esp + 4), size = R32(ctx.esp + 8), format = R32(ctx.esp + 12);
+    __imp__sub_001788F0(ctx, base);
+    if (self != kGameCube || !car_cubes) return;
+    const uint32_t eax = ctx.eax, ecx = ctx.ecx, edx = ctx.edx;
+    for (CarCube& c : g_cubes) {
+        if (!c.object) {
+            c.object = mem::AllocSystem(kCubeSize);
+            std::memset(&kernel::G<uint8_t>(c.object), 0, kCubeSize);
+        }
+        c.texture.store(0);
+        if (R32(c.object + kCubeTexture)) {
+            ctx.ecx = c.object;
+            kernel::CallGuest(ctx, kFreeCube, {});
+        }
+        ctx.ecx = c.object;
+        kernel::CallGuest(ctx, kMakeCube, {depth, size, format});
+    }
+    ctx.eax = eax, ctx.ecx = ecx, ctx.edx = edx;
+    LOGR("pgr2: car cubes: %u more cubes made (%ux%u, format %u)", kSlots, size, size, format);
+}
+
+// the game's cube freed: the cars' too
+X86_EXTERN_FUNC(__imp__sub_001786C0);
+X86_FUNC(sub_001786C0) {
+    const uint32_t self = ctx.ecx;
+    __imp__sub_001786C0(ctx, base);
+    if (self != kGameCube) return;
+    const uint32_t eax = ctx.eax, ecx = ctx.ecx;
+    for (CarCube& c : g_cubes) {
+        c.texture.store(0);
+        if (!c.object || !R32(c.object + kCubeTexture)) continue;
+        ctx.ecx = c.object;
+        kernel::CallGuest(ctx, kFreeCube, {});
+    }
+    ctx.eax = eax, ctx.ecx = ecx;
+}
+
+// The cube pass (thiscall, the cube camera): its far plane (camera +0x18, 30 m) and object range (+0x20, a tenth of each
+// object's own) as the reflection settings ask. The main view's are 3000 m (the race far 0x49DFDC) and the whole range
+// (+0x24). reflection_far: metres, 0 the console's; reflection_range: 0 the console's, 1 three times it (the mirror's
+// share), 2 ten times (the main view's).
+X86_EXTERN_FUNC(__imp__sub_00180040);
+X86_FUNC(sub_00180040) {
+    constexpr uint32_t kCamFar = 0x18, kCamRange = 0x20;
+    static float console_far = 0, console_range = 0, wrote_far = -1, wrote_range = -1;
+    const uint32_t cam = ctx.ecx;
+    if (cam && R32(cam + kCamKind) == kKindCube) {
+        auto get = [](uint32_t va) { float f; std::memcpy(&f, &kernel::G<uint32_t>(va), 4); return f; };
+        auto put = [](uint32_t va, float f) { std::memcpy(&kernel::G<uint32_t>(va), &f, 4); };
+        const float far = get(cam + kCamFar), range = get(cam + kCamRange);
+        if (far != wrote_far) console_far = far;  // the game's own (set again by the game, or never written by us)
+        if (range != wrote_range) console_range = range;
+        static bool said = false;
+        if (!said) LOGR("pgr2: reflection cube far %g, object range %g (the console's)", console_far, console_range), said = true;
+        wrote_far = reflection_far ? float(reflection_far) : console_far;
+        static const float kRangeTimes[] = {1, 3, 10};
+        wrote_range = console_range * kRangeTimes[std::min<uint32_t>(reflection_range, 2)];
+        put(cam + kCamFar, wrote_far);
+        put(cam + kCamRange, wrote_range);
+    }
+    __imp__sub_00180040(ctx, base);  // its ret has popped the return address
+    // then every other car's own cube, by the same pass (g_extra_cube: straight to the game's)
+    if (!g_extra_cube && car_cubes && cam && R32(cam + kCamKind) == kKindCube) DrawCarCubes(ctx, cam);
 }
 
 // whether a car is drawn (thiscall, the car; al): not the followed car while the cube's cars are queued

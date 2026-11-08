@@ -37,6 +37,8 @@ extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
+extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
+extern bool reflection_every_frame, car_cubes;
 
 namespace {
 
@@ -170,6 +172,14 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(tree_detail); },
      [](uint32_t i) { tree_detail = i != 0; }},
+};
+
+// the reflection cube's far plane in metres (0 the console's 30), the ray traced scene's reach and ray length
+const std::vector<uint32_t> kCubeFar = {0, 60, 120, 250, 500, 1000, 3000};
+const std::vector<uint32_t> kTracedRange = {100, 200, 400, 800, 1600};
+const std::vector<uint32_t> kTracedRay = {30, 60, 120, 250, 500};
+
+const std::vector<Row> kReflections = {
     {u"Water Reflections", u"Water mirrors the city and cars around it. May cost frame rate near water.", OnOff,
      [] { return uint32_t(planar_water); },
      [](uint32_t i) { planar_water = i != 0; }},
@@ -179,10 +189,33 @@ const std::vector<Row> kDetail = {
     {u"Cars in Reflections", u"Your car reflects the cars around it. May cost frame rate.", OnOff,
      [] { return uint32_t(cars_in_reflections); },
      [](uint32_t i) { cars_in_reflections = i != 0; }},
+    {u"Reflection Distance", u"How far the reflections see. The console's is 30 m. Farther may cost frame rate.",
+     [] { return Choices{u"Console", u"60 m", u"120 m", u"250 m", u"500 m", u"1000 m", u"3000 m"}; },
+     [] { return Nearest(kCubeFar, reflection_far); },
+     [](uint32_t i) { reflection_far = kCubeFar[i]; }},
+    {u"Reflection Objects", u"How far each object shows in reflections. Main View is as far as you see it.",
+     [] { return Choices{u"Console", u"Mirror", u"Main View"}; },
+     [] { return std::min<uint32_t>(reflection_range, 2); },
+     [](uint32_t i) { reflection_range = i; }},
+    {u"Reflection Updates", u"Above 30 fps: every face each frame, not 30 times a second. Costs frame rate.",
+     [] { return Choices{u"Console", u"Every Frame"}; },
+     [] { return uint32_t(reflection_every_frame); },
+     [](uint32_t i) { reflection_every_frame = i != 0; }},
+    {u"Every Car's Own Reflection", u"Every car reflects from where it is. May cost frame rate. From the next race.", OnOff,
+     [] { return uint32_t(car_cubes); },
+     [](uint32_t i) { car_cubes = i != 0; }},
 #ifdef __APPLE__
     {u"Ray Traced Reflections", u"Cars reflect each other by ray tracing. May cost frame rate.", OnOff,
      [] { return uint32_t(traced_reflections); },
      [](uint32_t i) { traced_reflections = i != 0; }},
+    {u"Traced Cars Range", u"Ray tracing: cars this close to the camera can be reflected.",
+     [] { return Choices{u"100 m", u"200 m", u"400 m", u"800 m", u"1600 m"}; },
+     [] { return Nearest(kTracedRange, traced_range); },
+     [](uint32_t i) { traced_range = kTracedRange[i]; }},
+    {u"Traced Ray Length", u"Ray tracing: how far a reflection reaches to find a car.",
+     [] { return Choices{u"30 m", u"60 m", u"120 m", u"250 m", u"500 m"}; },
+     [] { return Nearest(kTracedRay, traced_ray); },
+     [](uint32_t i) { traced_ray = kTracedRay[i]; }},
 #endif
 };
 
@@ -383,7 +416,8 @@ struct Section {
 };
 const Section kSections[] = {
     {u"Picture", u"Anti-aliasing, sharpening and textures.", &kPicture},
-    {u"Detail", u"Car, mirror and tree detail, and reflections.", &kDetail},
+    {u"Detail", u"Car, mirror and tree detail.", &kDetail},
+    {u"Reflections", u"Cars, water and the reflection cube.", &kReflections},
 #ifdef __APPLE__
     {u"Performance", u"Render scale and frame cap.", &kPerformance},
 #else
