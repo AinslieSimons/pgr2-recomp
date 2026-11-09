@@ -16,6 +16,8 @@ extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
+extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
+extern bool water_area_cull;
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -55,6 +57,10 @@ void Init() {
     if (const char* e = std::getenv("PGR2_FULL_TEXTURES"); e) pgr2::full_textures = *e == '1';
     if (const char* e = std::getenv("PGR2_TREE_DETAIL"); e) pgr2::tree_detail = *e == '1';
     if (const char* e = std::getenv("PGR2_PLANAR_WATER"); e) pgr2::planar_water = *e == '1';
+    if (const char* e = std::getenv("PGR2_WATER_AREA"); e) pgr2::water_area_cull = *e == '1';
+    if (const char* e = std::getenv("PGR2_WATER_SCALE"); e) pgr2::water_scale = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_WATER_UPDATE"); e) pgr2::water_update = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_WATER_FAR"); e) pgr2::water_far_detail = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_CAR_REFLECTIONS"); e) pgr2::car_reflections = *e == '1';
     if (const char* e = std::getenv("PGR2_CARS_IN_REFLECTIONS"); e) pgr2::cars_in_reflections = *e == '1';
     if (const char* e = std::getenv("PGR2_TRACED_REFLECTIONS"); e) pgr2::traced_reflections = *e == '1';
@@ -62,6 +68,7 @@ void Init() {
     if (const char* e = std::getenv("PGR2_REFLECTION_RANGE"); e) pgr2::reflection_range = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_CUBE_ALL"); e) pgr2::reflection_every_frame = *e == '1';
     if (const char* e = std::getenv("PGR2_CAR_CUBES"); e) pgr2::car_cubes = *e == '1';
+    if (const char* e = std::getenv("PGR2_CAR_CUBE_EVERY"); e) pgr2::car_cube_every = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RANGE"); e) pgr2::traced_range = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
     InstallDrawFilter();  // after the options: the DLC setting picks its part
@@ -80,6 +87,10 @@ uint32_t car_detail = 2;  // 0 the console's, 1 high, 2 highest (src/game/detail
 bool mirror_detail = true;  // the mirror sees and draws as the main view does (src/game/detail.cpp)
 bool tree_detail = true;  // trees at full detail at any distance (src/game/detail.cpp)
 bool planar_water = true;  // water reflects the world in its plane (src/game/planar_water.cpp)
+bool water_area_cull = true;  // the reflection draws only what the visible water can show
+uint32_t water_scale = 100;  // the reflection's size, percent of the frame's
+uint32_t water_update = 1;  // the reflection redrawn: 0 every frame, 1 every other frame while frames run over budget, 2 always every other frame
+uint32_t water_far_detail = 2;  // which far, small city blocks the reflection leaves out: 0 none, 1 few, 2 some, 3 most
 bool car_reflections = true;  // every car reflects the live cube, not only the followed one (src/game/car_reflections.cpp)
 bool cars_in_reflections = true;  // the reflection cube shows the other cars (src/game/car_reflections.cpp)
 bool traced_reflections = false;  // cars reflect each other by rays traced on the GPU, Metal (src/game/car_reflections.cpp)
@@ -87,6 +98,7 @@ uint32_t reflection_far = 0;      // the reflection cube's far plane in metres, 
 uint32_t reflection_range = 0;    // its object range: 0 the console's (a tenth), 1 three times, 2 ten times (the main view's)
 bool reflection_every_frame = true;   // every cube face every frame above 30, not each at 30 a second (src/game/hooks.cpp)
 bool car_cubes = true;            // a reflection cube of its own for every other car
+uint32_t car_cube_every = 3;      // each car's cube is redrawn one frame in this many
 uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
 uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
 bool full_textures = true;  // every streamed texture at its full size from the city load (src/game/full_textures.cpp)
@@ -122,6 +134,14 @@ const app::GameInfo app::kGame = {
                  "On by default: trees keep all their leaves and their fullest shape at any distance; may cost frame rate where there are many; at once."},
                 {"planar_water", &pgr2::planar_water, nullptr, "Water reflections",
                  "On by default: water mirrors the city and cars around it, rather than a fixed picture of the city; draws the scene a second time where water is in view, so may cost frame rate there; at once."},
+                {"water_area_cull", &pgr2::water_area_cull, nullptr, "Water reflection area culling",
+                 "On by default: the water's reflection draws only what the visible water can show; at once."},
+                {"water_scale", nullptr, &pgr2::water_scale, "Water reflection size (%)",
+                 "100 by default: the reflection's size against the frame's, 25 to 100; lower costs less, slightly softer; at once."},
+                {"water_far_detail", nullptr, &pgr2::water_far_detail, "Water reflection far detail",
+                 "2 by default: which far, small city blocks the water's reflection leaves out. 0 none, 1 beyond 800 m with a radius under 20 m, 2 beyond 400 m under 50 m, 3 beyond 400 m under 100 m; higher costs less; at once."},
+                {"water_update", nullptr, &pgr2::water_update, "Water reflection updates",
+                 "1 by default: 0 every frame, 1 every other frame while frames run over budget, 2 always every other frame; at once."},
                 {"car_reflections", &pgr2::car_reflections, nullptr, "Live reflections on every car",
                  "On by default: other cars reflect the street as yours does, rather than a fixed picture of the city; at once."},
                 {"cars_in_reflections", &pgr2::cars_in_reflections, nullptr, "Cars in reflections",
@@ -136,6 +156,8 @@ const app::GameInfo app::kGame = {
                  "On by default: above 30 fps every face is redrawn every frame; off, each face 30 times a second as on the console (cheaper); at once."},
                 {"car_cubes", &pgr2::car_cubes, nullptr, "Every car reflects from where it is",
                  "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
+                {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
+                 "3 by default (1 to 8): a higher number costs less frame rate, the cars' reflections update less often; at once."},
                 {"traced_range", nullptr, &pgr2::traced_range, "Ray traced cars range (m)",
                  "400 by default: cars this close to the camera are in the ray traced scene; at once."},
                 {"traced_ray", nullptr, &pgr2::traced_ray, "Ray traced reflection length (m)",

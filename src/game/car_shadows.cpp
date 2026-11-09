@@ -9,6 +9,8 @@
 #include <cstring>
 #include <vector>
 
+#include "app/perf.h"
+#include "game/perf_zones.h"
 #include "core/log.h"
 #include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
@@ -54,6 +56,7 @@ X86_FUNC(sub_001892E0) {
         g_followed = kernel::R32(ctx.esp + 4);
         g_strength = kernel::R32(ctx.esp + 8);
     }
+    perf::Zone zone(pgr2::kZShadows);
     __imp__sub_001892E0(ctx, base);
 }
 

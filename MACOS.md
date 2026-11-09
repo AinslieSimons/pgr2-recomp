@@ -19,7 +19,7 @@ headless Linux VM; this port adds a third platform.
 
 ### Renderer gaps
 
-MSAA and SMAA are ignored (logged once), a sampler's LOD bias is applied only on macOS 26 and later (`lodBias`), border
+SMAA is ignored (logged once), MSAA covers targets as big as the screen and not the water, a sampler's LOD bias is applied only on macOS 26 and later (`lodBias`), border
 colours snap to the nearest of Metal's three, and depth bias is only approximate on `Depth32Float_Stencil8`. A question the game would ask on Windows
 ("different release") is answered yes and logged.
 
@@ -68,6 +68,30 @@ The recording (`XBE_PAD_RECORD`, `XBE_PAD_PLAY`, `xdk/xapi.cpp`) is keyed to the
 a frame, not to the clock, so a press lands on the same frame however long loading takes. The game must start from the
 same saves and settings it was recorded from, or a press lands on another menu item; and `race_fps` must match, as
 the race steps per frame. The headless harness takes the same variables.
+
+## Performance recording
+
+F9 starts and stops a recording (`XBE_PERF=1`: from the start); F10 drops a marker in it, for a moment you noticed.
+Each recording is a folder `perf/<date-time>` beside the executable (`build/macapp/perf/...`):
+
+- `frames.csv`: one row a frame: its time (`interval_ms`), that as `fps`, `work_ms` (the time without waits for the display) and target; where it waited (the pacer, the next drawable, frames in flight);
+  the GPU's time for the frame's command buffers; CPU time in the backend's draws; shader, pipeline, texture upload and
+  read-back costs; waits for GPU reports and in the kernel; draws and triangles in all, by pass (main, mirror, cube,
+  car_cubes, light_pool, water, hud_2d, no_camera, other: `src/game/draw_filter.cpp`) and by kind; each pass's vertex and
+  fragment time from the GPU's timestamps; the city, replay flag, view mode and car count; the stages of a draw on the
+  drawing thread; encoders, binds, bytes copied and state changes; the game's own functions (`src/game/perf_zones.h`); the
+  core each main thread was on; memory, live textures, ring use and thermal state.
+- `encoders.csv`: every GPU encoder of one frame in ten: kind, pass, target and depth size and format, load and store
+  actions, draws, the first draw's shaders and texture, vertex and fragment time. One frame in 120 gives each screen-space
+  draw an encoder of its own, so the cost of each shows alone (`probe` 1).
+- `threads.csv`: each thread's CPU time each frame. Guest threads are `guest <id>`; `info.txt` names the one that draws
+  and presents.
+- `events.csv`, `info.txt` and a copy of the settings file.
+
+`python3 sdk/tools/perf/analyze.py build/macapp/perf` turns the newest recording into `report.html` beside it: what
+limited the frames (the GPU, the drawing thread, another thread, the pacer, one-off costs), frame timing over time with
+the markers, threads, draws by pass, and the worst frames. A frame counts as limited by whatever was busy for 80% of its
+interval or more. The code: `sdk/runtime/app/perf.{h,cpp}`, called from the Metal backend and the Mac host.
 
 ## Dock app and shader cache
 
@@ -118,7 +142,7 @@ Overlapping shadows take one darkening: `src/game/draw_filter.cpp` gives each sh
 
 1. Play it by hand: keyboard, a controller, sound, the F1 window.
 2. Compare frames with the Windows build, especially car reflections, which looked dark in the first captures.
-3. MSAA and SMAA.
+3. SMAA.
 4. A `.app` bundle built from the player's own disc, with files in Application Support.
 5. Soak tests for memory ordering: long races, saves, and system link against a Windows build.
 

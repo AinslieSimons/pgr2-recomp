@@ -39,6 +39,7 @@ extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
+extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
 
 namespace {
 
@@ -180,9 +181,10 @@ const std::vector<uint32_t> kTracedRange = {100, 200, 400, 800, 1600};
 const std::vector<uint32_t> kTracedRay = {30, 60, 120, 250, 500};
 
 const std::vector<Row> kReflections = {
-    {u"Water Reflections", u"Water mirrors the city and cars around it. May cost frame rate near water.", OnOff,
-     [] { return uint32_t(planar_water); },
-     [](uint32_t i) { planar_water = i != 0; }},
+    {u"Water Reflections", u"Water mirrors the city and cars around it, at this size. Smaller costs less.",
+     [] { return Choices{u"Off", u"50%", u"75%", u"Full"}; },
+     [] { return !planar_water ? 0u : water_scale <= 50 ? 1u : water_scale <= 75 ? 2u : 3u; },
+     [](uint32_t i) { planar_water = i != 0; if (i) water_scale = i == 1 ? 50 : i == 2 ? 75 : 100; }},
     {u"Car Reflections", u"Other cars reflect the street as yours does, not a fixed picture.", OnOff,
      [] { return uint32_t(car_reflections); },
      [](uint32_t i) { car_reflections = i != 0; }},
@@ -201,9 +203,10 @@ const std::vector<Row> kReflections = {
      [] { return Choices{u"Console", u"Every Frame"}; },
      [] { return uint32_t(reflection_every_frame); },
      [](uint32_t i) { reflection_every_frame = i != 0; }},
-    {u"Every Car's Own Reflection", u"Every car reflects from where it is. May cost frame rate. From the next race.", OnOff,
-     [] { return uint32_t(car_cubes); },
-     [](uint32_t i) { car_cubes = i != 0; }},
+    {u"Every Car's Own Reflection", u"Every car reflects from where it is, redrawn this often. Off to on: from the next race.",
+     [] { return Choices{u"Off", u"Every Frame", u"1 in 2", u"1 in 3", u"1 in 4"}; },
+     [] { return car_cubes ? std::clamp<uint32_t>(car_cube_every, 1, 4) : 0; },
+     [](uint32_t i) { car_cubes = i != 0; if (i) car_cube_every = i; }},
 #ifdef __APPLE__
     {u"Ray Traced Reflections", u"Cars reflect each other by ray tracing. May cost frame rate.", OnOff,
      [] { return uint32_t(traced_reflections); },
@@ -220,6 +223,14 @@ const std::vector<Row> kReflections = {
 };
 
 const std::vector<Row> kPerformance = {
+    {u"Water Updates", u"How often water reflections redraw. When Slow halves them only while frames run over budget.",
+     [] { return Choices{u"Every Frame", u"When Slow", u"Half Always"}; },
+     [] { return std::min<uint32_t>(water_update, 2); },
+     [](uint32_t i) { water_update = i; }},
+    {u"Water Far Detail", u"Far, small buildings left out of water reflections. Less costs less.",
+     [] { return Choices{u"Full", u"High", u"Medium", u"Low"}; },
+     [] { return std::min<uint32_t>(water_far_detail, 3); },
+     [](uint32_t i) { water_far_detail = i; }},
     {u"Render Scale", u"The 3D picture's size, percent of the screen. More is slower.",
      [] { return Choices{u"25%", u"50%", u"75%", u"100%", u"125%", u"150%", u"175%", u"200%"}; },
      [] { return Nearest(kRender, app::Get().render_percent); },

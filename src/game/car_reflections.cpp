@@ -20,7 +20,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "app/perf.h"
 #include "core/log.h"
+#include "game/perf_zones.h"
 #include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
@@ -34,6 +36,7 @@ namespace pgr2 {
 extern bool car_reflections, cars_in_reflections, traced_reflections;  // src/common/game_info.cpp
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;  // src/common/game_info.cpp
 extern bool car_cubes;  // src/common/game_info.cpp
+extern uint32_t car_cube_every;  // src/common/game_info.cpp
 bool g_extra_cube = false;  // a car's own cube being drawn (src/game/hooks.cpp draws its every face)
 bool CarCubeFor(const gpu::State& s, uint32_t& cube);  // below
 bool InWaterReflection(const gpu::State& s);  // src/game/planar_water.cpp
@@ -368,7 +371,20 @@ X86_FUNC(sub_00186B20) {
         g_in_cube = false;
         ctx.ecx = camera;
     }
+    perf::Zone zone(pgr2::kZFlush);
     __imp__sub_00186B20(ctx, base);
+}
+
+// the performance recorder's view of two functions nothing else overrides
+X86_EXTERN_FUNC(__imp__sub_00117C40);
+X86_FUNC(sub_00117C40) {
+    perf::Zone zone(pgr2::kZWorldDraw);
+    __imp__sub_00117C40(ctx, base);
+}
+X86_EXTERN_FUNC(__imp__sub_00032010);
+X86_FUNC(sub_00032010) {
+    perf::Zone zone(pgr2::kZQueueCars);
+    __imp__sub_00032010(ctx, base);
 }
 
 // A cube of its own for every other car (car_cubes). The game makes one cube object (0x4862D0, 0xB4 bytes: six face
@@ -377,7 +393,9 @@ X86_FUNC(sub_00186B20) {
 // slot. After the game's cube pass, the pass is run again for each other car with the cube camera's cube (+0xBEF4) and
 // place (+0xBEF8, the car's +0x44 raised as the game raises the followed car's) moved to that car, which is left out of
 // it, the followed car put in. A car's draws (found by their world rows' place, other cars' c[110] to c[112], which is
-// the car's +0x44) then read its own cube. Each costs about what the game's own cube does.
+// the car's +0x44) then read its own cube. Each costs about what the game's own cube does, so they take turns
+// (car_cube_every: each is redrawn one frame in that many); every car's place is kept current each frame all the same,
+// as its draws are matched by it.
 namespace {
 constexpr uint32_t kGameCube = 0x4862D0, kMakeCube = 0x1788F0, kFreeCube = 0x1786C0, kCubeTexture = 0xA8, kCubeSize = 0xC0;
 constexpr uint32_t kCamCube = 0xBEF4, kCamAt = 0xBEF8, kCubeRaise = 0x275F58;
@@ -402,10 +420,15 @@ void DrawCarCubes(X86Context& ctx, uint32_t cam) {
     for (int i = 0; i < 4; i++) saved[i] = R32(cam + kCamCube + i * 4);
     const uint32_t eax = ctx.eax, ecx = ctx.ecx, edx = ctx.edx;
     const uint32_t count = std::min<uint32_t>(R32(kCars + kCarCount), kSlots);
+    static uint32_t turn = 0;
+    turn++;
+    const uint32_t every = std::clamp<uint32_t>(car_cube_every, 1, 8);
     for (uint32_t k = 0; k < count; k++) {
         CarCube& c = g_cubes[k];
         const uint32_t car = kCars + kCarFirst + k * kCarStride;
         if (car == followed || !c.object || !R32(c.object + kCubeTexture)) continue;
+        for (int i = 0; i < 3; i++) c.at[i].store(R32(car + kCarAt + i * 4), std::memory_order_relaxed);
+        if ((k + turn) % every != 0) continue;
         kernel::W32(cam + kCamCube, c.object);
         for (int i = 0; i < 3; i++) PutF(cam + kCamAt + i * 4, GetF(car + kCarAt + i * 4) + (i == 1 ? GetF(kCubeRaise) : 0.0f));
         g_cube_car = car;
@@ -414,7 +437,6 @@ void DrawCarCubes(X86Context& ctx, uint32_t cam) {
         kernel::CallGuest(ctx, 0x180040, {});
         g_extra_cube = false;
         g_cube_car = 0;
-        for (int i = 0; i < 3; i++) c.at[i].store(R32(car + kCarAt + i * 4), std::memory_order_relaxed);
         c.texture.store(R32(c.object + kCubeTexture), std::memory_order_release);
     }
     ctx.eax = eax, ctx.ecx = ecx, ctx.edx = edx;
@@ -508,9 +530,15 @@ X86_FUNC(sub_00180040) {
         put(cam + kCamFar, wrote_far);
         put(cam + kCamRange, wrote_range);
     }
-    __imp__sub_00180040(ctx, base);  // its ret has popped the return address
+    {
+        perf::Zone zone(g_extra_cube ? -1 : int(pgr2::kZCubePass));
+        __imp__sub_00180040(ctx, base);  // its ret has popped the return address
+    }
     // then every other car's own cube, by the same pass (g_extra_cube: straight to the game's)
-    if (!g_extra_cube && car_cubes && cam && R32(cam + kCamKind) == kKindCube) DrawCarCubes(ctx, cam);
+    if (!g_extra_cube && car_cubes && cam && R32(cam + kCamKind) == kKindCube) {
+        perf::Zone zone(pgr2::kZCarCubes);
+        DrawCarCubes(ctx, cam);
+    }
 }
 
 // whether a car is drawn (thiscall, the car; al): not the followed car while the cube's cars are queued

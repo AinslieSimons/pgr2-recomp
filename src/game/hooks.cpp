@@ -17,6 +17,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "app/perf.h"
+#include "game/perf_zones.h"
+#include "gpu/backend.h"
 #include "app/app.h"
 #include "core/log.h"
 #include "kernel/kernel.h"
@@ -458,6 +461,9 @@ X86_FUNC(sub_000D90F0) {
     pgr2::ApplySettingsEntry();
     ApplyDrawDistance();
     pgr2::ApplyDetail();
+    // once a race's results are done (0x383984, cleared by the next race's setup) visibility reports are waited for: the
+    // post-race screens came out garbled with them a frame late
+    gpu::g_reports_wait.store(kernel::G<uint8_t>(0x383984) != 0, std::memory_order_relaxed);
     Pillarbox();
     ApplyAspect();
     __imp__sub_000D90F0(ctx, base);
@@ -717,7 +723,11 @@ X86_FUNC(sub_0017FCC0) {
     // PGR2_FLARES=1 (experiment): 0x291A27 -1, so the flare pass runs in camera mode 12 as in the other views
     static const bool flares = std::getenv("PGR2_FLARES") != nullptr;
     if (flares) kernel::G<uint8_t>(0x291A27) = 0xFF;
-    pgr2::WaterBeforeView(ctx);
+    {
+        perf::Zone zone(pgr2::kZWaterView);
+        pgr2::WaterBeforeView(ctx);
+    }
+    perf::Zone zone(pgr2::kZGameView);
     __imp__sub_0017FCC0(ctx, base);
 }
 

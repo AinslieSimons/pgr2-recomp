@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 
+#include "app/perf.h"
 #include "core/log.h"
 #include "gpu/state.h"
 #include "gpu/texture.h"
@@ -17,9 +18,12 @@
 namespace pgr2 {
 extern bool dlc, cpu_car_shadows;  // src/common/game_info.cpp
 extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
+extern bool g_extra_cube;                    // src/game/car_reflections.cpp
+bool InWaterReflection(const gpu::State& s);  // src/game/planar_water.cpp
 void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust);          // src/game/planar_water.cpp
 void CarReflectionDraw(const gpu::State& s, gpu::DrawAdjust& adjust);  // src/game/car_reflections.cpp
 void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust);       // src/game/car_reflections.cpp
+void WaterRegisterLog();                                               // src/game/planar_water.cpp
 }
 
 namespace {
@@ -137,7 +141,38 @@ private:
 };
 OneShadowEach g_one_shadow;
 
+// perf (app/perf.h): which part of the frame a draw belongs to, by the camera being drawn (0x3CD804, its kind at +0x40:
+// 0 main, 1 mirror, 2 reflection cube, 3 light pool), a car's own cube being drawn, or the water's reflection target.
+// The HUD and menus count with the camera last drawn, or "other" outside a race.
+uint32_t g_view_camera = 0;  // the last main view's camera: at a present none is being drawn
+enum Pass { kOther, kMain, kMirror, kCube, kCarCubes, kLightPool, kWater, kHud2d, kNoCamera };
+enum Kind { kKindWorld, kKindBlended, kKindCar, kKindWater, kKindPoints, kKind2d };
+void LabelPass(const gpu::State& s) {
+    if (!perf::On()) return;
+    const uint32_t modes = s.rs[gpu::kRsPsTextureModes];
+    // an FVF with transformed positions (D3DFVF_XYZRHW): drawn in screen space
+    const bool flat = !(s.vs_handle & 1) && (s.vs_handle & 0xE) == 0x4;
+    const bool car = modes == 0x8401 || modes == 0x8421 || modes == 0x8021 || modes == 0x0421;
+    perf::SetKind(flat ? kKind2d : car ? kKindCar : modes == 0x64621 ? kKindWater : s.simple[gpu::kMBlendEnable >> 2] ? kKindBlended : kKindWorld);
+    int pass = kOther;
+    if (pgr2::InWaterReflection(s)) pass = kWater;
+    else if (pgr2::g_extra_cube) pass = kCarCubes;
+    else if (flat) pass = kHud2d;
+    else if (!kernel::R32(0x3CD804)) pass = kNoCamera;
+    else if (const uint32_t cam = kernel::R32(0x3CD804)) {
+        if (kernel::R32(cam + 0x40) == 0) g_view_camera = cam;
+        switch (kernel::R32(cam + 0x40)) {
+        case 0: pass = kMain; break;
+        case 1: pass = kMirror; break;
+        case 2: pass = kCube; break;
+        case 3: pass = kLightPool; break;
+        }
+    }
+    perf::SetPass(pass);
+}
+
 void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
+    LabelPass(s);
     g_one_shadow.Filter(s);
     pgr2::WaterDraw(s, adjust);
     if (adjust.skip) return;
@@ -161,6 +196,19 @@ void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
 
 // called from the game's init (src/common/game_info.cpp): a static initializer here never ran in the Windows exe
 void InstallDrawFilter() {
+    pgr2::WaterRegisterLog();
+    perf::SetPassNames({"other", "main", "mirror", "cube", "car_cubes", "light_pool", "water", "hud_2d", "no_camera"});  // Pass, in order
+    perf::SetKindNames({"world", "blended", "car", "water", "points", "2d"});                                             // Kind, in order
+    perf::SetZoneNames({"game_view", "water_view", "cube_pass", "car_cubes", "flush", "queue_cars", "world_draw", "shadows"});  // ZoneId, src/game/perf_zones.h
+    // the city (the race's index), a replay (as the pause menu tells one), the view mode, the cars in the race
+    perf::SetState({"city", "replay", "view_mode", "cars"}, []() -> std::vector<int64_t> {
+        const int32_t mode = int32_t(kernel::R32(0x383190));
+        // read between frames, while the game may be tearing a race down: only what looks like an address in its memory
+        const uint32_t held = g_view_camera ? kernel::R32(g_view_camera + 0x10) : 0;
+        const uint32_t viewer = held >= 0x10000 && held < 0x4000000 ? held : 0;
+        return {int32_t(kernel::R32(0x38317C)), mode >= 0 && mode < 64 && (kernel::G<uint8_t>(0x34C2B0 + uint32_t(mode) * 0x4C) & 4) ? 1 : 0,
+                viewer ? int32_t(kernel::R32(viewer + 0x128)) : -1, int32_t(kernel::R32(0x297390 + 0x0C))};
+    });
     const char* nearer = std::getenv("PGR2_SHADOW_NEARER");
     bool shadow = nearer && *nearer == '1';
     g_skip_error_material = pgr2::dlc;
