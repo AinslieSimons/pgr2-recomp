@@ -39,7 +39,8 @@ extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
-extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
+extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao;
+void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
 
 namespace {
 
@@ -126,6 +127,8 @@ void WheelChanged() { input::WheelSetup(); }
 // Quit Game: a second press to the right leaves
 uint32_t g_quit = 0;
 
+const std::vector<uint32_t> kAoStrength = {0, 25, 50, 60, 75, 100};
+
 const std::vector<Row> kPicture = {
     {u"MSAA", u"Smooths the edges of the 3D scene. More is slower.",
      [] { return Choices{u"Off", u"2x", u"4x", u"8x"}; },
@@ -158,6 +161,12 @@ const std::vector<Row> kPicture = {
     {u"Full Size Textures", u"Every city texture at full size. Uses a little more memory. From the next race.", OnOff,
      [] { return uint32_t(full_textures); },
      [](uint32_t i) { full_textures = i != 0; }},
+#ifdef __APPLE__
+    {u"Ambient Occlusion", u"Shade where the city's surfaces meet, ray traced in the background as streets are first seen.",
+     [] { return Choices{u"Off", u"25%", u"50%", u"60%", u"75%", u"100%"}; },
+     [] { return Nearest(kAoStrength, baked_ao); },
+     [](uint32_t i) { SetBakedAo(kAoStrength[i]); }},
+#endif
 };
 
 const std::vector<Row> kDetail = {

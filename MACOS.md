@@ -62,7 +62,7 @@ of a test sees the same menus, race and replay:
 The usual test is `demos`: the five demo replays the game ships (Start Player's Game > Options > PGR 2 Demos: Hong
 Kong, Washington DC, Chicago, Florence, Barcelona), played in list order, with two screenshots in each from
 `.local/replay/demos.shots`. Two playbacks of it gave 8 of 10 screenshots identical to the pixel; Chicago's two differ
-only in tyre smoke, which the game makes at random. The demos do not play quite right at a race_fps of 60 (2026-11-07).
+only in tyre smoke, which the game makes at random. The demos played wrong at any race_fps until RSQRTSS was answered as the Pentium III does (2026-11-09, PROGRESS.md).
 
 The recording (`XBE_PAD_RECORD`, `XBE_PAD_PLAY`, `xdk/xapi.cpp`) is keyed to the game's own reads of the controller, once
 a frame, not to the clock, so a press lands on the same frame however long loading takes. The game must start from the
@@ -115,6 +115,32 @@ Overlapping shadows take one darkening: `src/game/draw_filter.cpp` gives each sh
 ## Water reflections
 
 `src/game/planar_water.cpp`, the `planar_water` setting (on by default, F1 > Game): the scene is drawn a second time, mirrored, where water reaches the renderer. FINDINGS.md, "Water reflections", has the method and costs.
+
+## Baked ambient occlusion
+
+`gpu/baked_ao.{h,mm}` and `src/game/baked_ao.cpp`, the `baked_ao` setting (percent of the occlusion as baked, 60 by default,
+0 off; F1 > Picture, "Ambient Occlusion"; `PGR2_BAKED_AO`). The city's static meshes are ray traced for ambient
+occlusion in the background and the result kept beside the shader cache, in `metalcache/ao/scene_<city>.bin`
+(`XBE_AO_DIR` elsewhere). Nothing is shipped or waited for: a street has none the first time it is seen, and has it from
+a few seconds later.
+
+- **Which draws.** The game names them (`gpu::ao::g_eligible`): the city programs' draws, not water or blended, with the
+  city's index as the scene. Their vertices are in world coordinates and never change. Each is known by its vertex data,
+  its indices' guest address and its count, read on the game thread before the render thread copies the indices
+  (`render_thread.cpp`), and its entry rides with the draw command (`ao::g_draw`).
+- **The bake.** Every new mesh's triangles go into the scene; at 20,000 new triangles, or 3 seconds, a background
+  thread builds an acceleration structure of all the scene's triangles and bakes the new ones: a grid of points on
+  each triangle (one every 25 cm along its longest edge, at most 16), 128 cosine-weighted rays 8 m long, in command
+  buffers of about a millisecond. Each triangle is baked on the side the camera was on when its mesh was first drawn
+  (the camera, c[126], is kept with the mesh): the city is wound either way (roads face down, barriers out; about a
+  fifth of triangles are seen from behind their winding) and every face on screen reports front facing, so the screen
+  cannot tell. A hit on a surface within about 18 degrees of parallel and 25 cm of the point's plane is not counted:
+  roads are laid in overlapping layers. A city's file is about 25 to 80 MB. A later run bakes again what was baked
+  against fewer than four fifths of the triangles the scene has since shown, and rewrites the file once half of it is
+  superseded.
+- **The read.** Pixel shaders of those draws (`PixelKey::ao`) take `[[primitive_id]]` and `[[barycentric_coord]]`,
+  interpolate the three grid points around the pixel and multiply the colour before fog. Testing: `XBE_AO_DEBUG=1`
+  shows the occlusion alone; `XBE_AO_FLIP=1` swaps odd strip triangles' barycentrics (wrong: diagonal seams on walls).
 
 ## What changed for macOS
 

@@ -18,6 +18,8 @@ extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
 extern bool water_area_cull;
+extern uint32_t baked_ao;
+void InstallBakedAo();  // src/game/baked_ao.cpp
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -71,7 +73,9 @@ void Init() {
     if (const char* e = std::getenv("PGR2_CAR_CUBE_EVERY"); e) pgr2::car_cube_every = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RANGE"); e) pgr2::traced_range = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_BAKED_AO"); e) pgr2::baked_ao = uint32_t(std::atoi(e));
     InstallDrawFilter();  // after the options: the DLC setting picks its part
+    pgr2::InstallBakedAo();
     pgr2::RaiseFrameCap();
 }
 }  // namespace
@@ -98,6 +102,7 @@ uint32_t reflection_far = 0;      // the reflection cube's far plane in metres, 
 uint32_t reflection_range = 0;    // its object range: 0 the console's (a tenth), 1 three times, 2 ten times (the main view's)
 bool reflection_every_frame = true;   // every cube face every frame above 30, not each at 30 a second (src/game/hooks.cpp)
 bool car_cubes = true;            // a reflection cube of its own for every other car
+uint32_t baked_ao = 60;           // the city's baked ambient occlusion, percent as baked, 0 off; Metal (src/game/baked_ao.cpp)
 uint32_t car_cube_every = 3;      // each car's cube is redrawn one frame in this many
 uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
 uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
@@ -158,6 +163,8 @@ const app::GameInfo app::kGame = {
                  "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
                 {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
                  "3 by default (1 to 8): a higher number costs less frame rate, the cars' reflections update less often; at once."},
+                {"baked_ao", nullptr, &pgr2::baked_ao, "Baked ambient occlusion (%)",
+                 "60 by default, 0 off: the city's ambient occlusion, ray traced in the background as streets are first seen and kept in metalcache/ao; macOS (Metal) only; at once."},
                 {"traced_range", nullptr, &pgr2::traced_range, "Ray traced cars range (m)",
                  "400 by default: cars this close to the camera are in the ray traced scene; at once."},
                 {"traced_ray", nullptr, &pgr2::traced_ray, "Ray traced reflection length (m)",

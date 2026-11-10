@@ -58,6 +58,10 @@ Each item is marked:
 - **[PGR2]** The frame step is FUN_000D90F0: dt = interval / refresh, and physics takes fixed 1/60 steps
   (FUN_000F5D60). The interval setter is 0x177C70. `race_60fps` clamps 2 to 1, so a race at 60 runs the same
   simulation as at 30 (an experiment, off by default).
+- **[console] Replays are inputs, simulated again.** PGR2's replays and demos hold the inputs (a minute of six cars in
+  3 to 8 KB), so the simulation must match the console to the bit. RSQRTSS/RCPSS must give Intel's 12 bit table
+  answers, not exact ones (the game refines them with a Newton step): exact answers sent every demo's car into a barrier
+  (2026-11-09, `sdk/runtime/cpu/sse_approx.h`). race_fps does not change the simulation (physics steps 1/60 either way).
 
 ## Rendering: console behaviours the runtime now matches
 

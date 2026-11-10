@@ -37,6 +37,38 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-09 - Metal: baked ambient occlusion for the city
+New: `sdk/runtime/gpu/baked_ao.{h,mm}`, `src/game/baked_ao.cpp`, setting `baked_ao` (60%, F1 > Picture "Ambient Occlusion", `PGR2_BAKED_AO`). MACOS.md, "Baked ambient occlusion", has the method. The city's static draws are known by vertex data, index address and count (a census of the demos before the render thread's copy: 36,663 keys, triangles never changed under one); their triangles are baked in the background against everything the city has shown and kept in `metalcache/ao`. Pixel shaders read the value by `[[primitive_id]]` and barycentrics; Apple GPUs give a strip's odd triangles their barycentrics in the bake's own order (the other order drew diagonal seams).
+Grey roads fixed: the city is wound either way (a probe of Hong Kong's road: normal straight down, one layer, 4 of 400 rays upward hit anything) and every face on screen reports front facing (`XBE_AO_DEBUG` views of front facing and of strips), so neither the winding nor the screen says which side is seen; a road read its underside. Now each triangle is baked on the side of the camera that first drew its mesh (c[126]; 16 to 20% of triangles are behind their winding), and hits on near-parallel layers within 25 cm are skipped. The road reads open, barriers and rails shaded only in their creases; one side halves the bake (Hong Kong 6.1 s).
+Evidence, muted demos with the recorder (AO off / first run baking / second run from the cache): 59.8 / 59.6 / 59.8 fps, frames over 18.5 ms 2.90 / 3.06 / 3.08%, GPU mean 7.1 / 6.8 / 7.2 ms, drawing-thread draw time 5.57 / 5.74 / 5.65 ms. A city bakes in 7 to 14 s of background GPU time (Hong Kong: 33.6 million points against 649,386 triangles in 14.5 s). Screenshots 5 to 10% darker on average at 60%.
+Open: the files are large until compacted (rebakes append); the second run rebakes most meshes, since the first run bakes early meshes against a partial city. The frame time numbers above are from the two-sided bake. Next: smaller files.
+
+### 2026-11-09 - demos and replays out of sync: RSQRTSS and RCPSS as the Pentium III answers them
+PGR2's replays are its inputs, not the cars' positions (the five demos, `data/Replays/Replay.*` on the disc, are 2.9 to
+7.6 KB for a minute of six cars), so the race is simulated again from them and has to come out the same to the bit.
+The recompiler translated RSQRTSS/RSQRTPS as an exact `1.0f / std::sqrt(b)` and RCPSS/RCPPS as `1.0f / b`. Intel's
+processors, the Xbox's included, answer with a 12 bit approximation from a table, and PGR2 refines it with one Newton
+step (0x1DFB8: rsqrtss, then y * (3 - x y y) / 2), so every one of the 270 RSQRTSS sites (none RCP) gave other last bits
+than the console's, and the replayed cars slowly left the recorded line.
+- SDK: `runtime/cpu/sse_approx.h` answers both as Intel does: the result depends on the top 11 mantissa bits (RCP), or
+  the top 10 and the exponent's parity (RSQRT); two tables of 2048 taken under Rosetta 2, whose RSQRTSS(1.0f) and
+  RCPSS(1.0f) give 0x3F7FF000 as Intel's processors do. The functions match Rosetta's instruction for all 2^32 inputs
+  (special cases included). `codegen_fp.cpp` emits `sse_rsqrt(b)` / `sse_rcp(b)`; the header is shipped with the
+  compiler files for the build on the player's PC. Generated code has to be made again (the build does it).
+- Evidence (`demos`, Metal, muted, `SHOT_EVERY` 4 s). Before, at race_fps 60: Hong Kong's Camaro hits the barrier about
+  20 s in and sits there (the camera stays at -460.2 7.4 -271.0 from pass 1801 to 2401), Washington's Skyline hits a
+  barrier, Chicago's GTO stops against a pillar for its last 20 s, Florence's Leon stays at a barrier for its last 20 s,
+  Barcelona's 350Z ends up sideways. The same at race_fps 30 (Hong Kong parked at the same camera, pass 901 to 1201).
+  After, at 60 (two runs) and at 30: all five drive their laps to the end, no car parked on a barrier. Hong Kong's chase
+  camera reads -330.3 6.7 42.5 at 30 (pass 1201) and at 60 (pass 2401): race_fps does not change the simulation. The
+  log's camera at a given pass differs by up to a metre or a camera cut between two runs of one build (frames are not
+  locked to game time in the intro), so it shows where the car is, not that two runs match to the bit.
+- So race_fps was not the cause (MACOS.md's note of 2026-11-07); the demos were wrong at 30 too. The pad recording
+  `demos.pad` is made at 60 and does not walk the menus right at 30 (the demo ends sooner, the cursor moves on).
+- Not settled: whether the replays are now bit exact with the console. No reference to compare with; x87 FSIN, FCOS,
+  FPATAN and F2XM1 are still the host's double results (the console keeps 64 bits in the register), a possible last bit
+  difference left. Windows and Linux builds untested (same code path).
+
 ### 2026-11-09 - Metal: MSAA on the scene
 `gpu/metal.mm`, the existing `msaa` setting (Picture page): full-screen targets and their depth draw into multisampled twins, and each pass resolves into the normal target as it ends (first sample for depth and stencil), so everything that reads a target is unchanged. Not the water's reflection or the cubes. Smooth Alpha Edges works with it. Builds; not yet run.
 
