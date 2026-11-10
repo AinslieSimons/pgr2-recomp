@@ -37,6 +37,19 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-09 - mirror corruption, 16:10 full screen, frame pacing
+
+- Coloured blocks in the mirror and a flickering HUD (Sydney at night, MSAA 4x, full screen): the Metal renderer's three
+  frame rings were guarded by three permits taken after each commit, so a fourth frame wrote the first one's ring while
+  the GPU still drew it. Four rings, three frames queued. Confirmed clean on the Mac. Two queued (the first fix) cost
+  frames: race recording, MSAA 4x, 2560x1600: 1.7% of frames over 25 ms queued two, 0.9% three, 0.3% three with AO off.
+- 16:10 full screen: the window opened 1280x720, so the TV shape latched at boot was 16:9; it now opens at the screen's
+  shape and the game boots in its 4:3 mode widened to 16:10. Confirmed on the Mac.
+- Hitches after these changes were shader compiles (the cache drops when the shader generators change); smooth once
+  rebuilt.
+- Open: a one pixel bright line beside each tachometer numeral with MSAA on or sharp 2D off (scale 3.0). Not the
+  texture's edge (an inset of reads at straight 2D edges changed nothing) nor centroid sampling.
+
 ### 2026-11-09 - menus at 4:3, title 2D at 4:3, 16:10 filled, tachometer lines
 
 - Menus: no menu code reads the widescreen flag 0x48614C (its readers: the 3D views, the race HUD 0xE5CF0, 0xD95B0,
