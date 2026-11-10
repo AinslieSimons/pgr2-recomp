@@ -483,8 +483,10 @@ X86_EXTERN_FUNC(__imp__sub_000D90F0);
 X86_FUNC(sub_000D90F0) {
     // above the console's 30, game time from the clock (the byte 0x2919AD picks that branch of the frame step, read
     // nowhere else, the one system link takes): a frame running late then takes more physics steps, where fixed time
-    // would slow the whole race down with the frame rate. PGR2_FIXED_TIME=1 keeps the fixed time.
-    static const bool fixed_time = std::getenv("PGR2_FIXED_TIME") != nullptr;
+    // would slow the whole race down with the frame rate. PGR2_FIXED_TIME=1 keeps the fixed time, as does recording or
+    // playing back controller 1 (XBE_PAD_RECORD, XBE_PAD_PLAY): with the clock's time a played back race drifted from the
+    // one recorded, the same presses on the same frames moving the car by different steps
+    static const bool fixed_time = std::getenv("PGR2_FIXED_TIME") || std::getenv("XBE_PAD_RECORD") || std::getenv("XBE_PAD_PLAY");
     if (Race60() && !fixed_time) kernel::G<uint8_t>(0x2919AD) = 1;
     if (uint32_t hz = RaceHz()) {
         bool racing = kernel::G<uint8_t>(0x49E110) != 0;

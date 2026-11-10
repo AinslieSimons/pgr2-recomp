@@ -210,6 +210,24 @@ void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
         else LOGR("pgr2: traced reflections: vertex shader %08X (modes %X) has no world rows: left as it is", s.vs_handle, s.rs[gpu::kRsPsTextureModes]);
     }
     const Program& prog = it->second;
+    // PGR2_TRACE_DRAWLOG="frame frame ..": every car draw of those frames, its program, kind and size
+    static const std::vector<uint64_t> draw_log = [] {
+        std::vector<uint64_t> v;
+        if (const char* e = std::getenv("PGR2_TRACE_DRAWLOG"))
+            for (char* p = const_cast<char*>(e); *p;) {
+                char* end;
+                const uint64_t f = std::strtoull(p, &end, 10);
+                if (end == p) break;
+                v.push_back(f), p = end;
+            }
+        return v;
+    }();
+    if (std::find(draw_log.begin(), draw_log.end(), adjust.frame) != draw_log.end()) {
+        const uint32_t active = R32(kActiveCamera), viewer = active ? R32(active + kCamViewer) : 0;
+        LOGR("trace drawlog %llu: vs %08X modes %X rows %d %s, %u indices, main %d, rt %08X, cam kind %u, view mode %u",
+             (unsigned long long)adjust.frame, s.vs_handle, s.rs[gpu::kRsPsTextureModes], prog.rows, prog.absolute ? "absolute" : "eye",
+             adjust.count, int(MainView(s)), s.rt.data, active ? R32(active + kCamKind) : 99, viewer ? R32(viewer + kViewerMode) : 99);
+    }
     if (prog.rows < 0 || !MainView(s)) return;
     if (adjust.frame != g_frame) {
         if (adjust.frame == g_frame + 1) g_last.swap(g_this);
@@ -551,5 +569,6 @@ X86_FUNC(sub_0001C900) {
     }
     __imp__sub_0001C900(ctx, base);
 }
+
 
 }  // namespace pgr2
