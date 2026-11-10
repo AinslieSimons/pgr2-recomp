@@ -40,7 +40,7 @@ extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflect
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao;
-extern bool menus_4x3;
+extern bool menus_4x3, cpu_car_shadows, water_area_cull;
 void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
 
 namespace {
@@ -83,14 +83,8 @@ uint32_t Nearest(const std::vector<uint32_t>& values, uint32_t v) {
     return uint32_t(best);
 }
 
-// a row: its texts, and the setting it shows as a choice index
-struct Row {
-    const char16_t* label;
-    const char16_t* help;
-    std::vector<const char16_t*> (*choices)();  // at most 8
-    uint32_t (*get)();
-    void (*set)(uint32_t);
-};
+// a row: its texts, and the setting it shows as a choice index (the settings window shows the same: app::MenuRow)
+using Row = app::MenuRow;
 using Choices = std::vector<const char16_t*>;
 
 Choices OnOff() { return {u"Off", u"On"}; }
@@ -98,7 +92,7 @@ Choices OnOff() { return {u"Off", u"On"}; }
 const std::vector<uint32_t> kRender = {25, 50, 75, 100, 125, 150, 175, 200}, kAniso = {0, 2, 4, 8, 16},
                             kDraw = {50, 75, 100, 150, 200, 300, 400}, kFov = {75, 90, 100, 110, 125, 150},
                             kSharpen = {0, 25, 50, 75, 100}, kRaceFps = {30, 60, 90, 120, 144},
-                            kCaps = {30, 60, 120, 144, 240, 0}, kSens = {25, 50, 75, 100, 150, 200, 400, 800},
+                            kCaps = {30, 60, 120, 144, 240, 0},
                             kWheelRange = {180, 270, 360, 540, 720, 900, 1080, 2880},
                             kWheelLock = {180, 270, 360, 450, 540, 720, 900, 1080},
                             kDead = {0, 1, 2, 3, 5, 10, 20}, kPercent = {0, 25, 50, 70, 85, 100};
@@ -123,7 +117,7 @@ uint32_t NearestCap(uint32_t cap) {
     return 1;
 }
 
-void WheelChanged() { input::WheelSetup(); }
+[[maybe_unused]] void WheelChanged() { input::WheelSetup(); }
 
 // Quit Game: a second press to the right leaves
 uint32_t g_quit = 0;
@@ -138,8 +132,16 @@ const std::vector<Row> kPicture = {
     {u"Smooth Alpha Edges", u"With MSAA: softens fences and leaves too.", OnOff,
      [] { return uint32_t(app::Get().alpha_coverage); },
      [](uint32_t i) { app::Get().alpha_coverage = i != 0; }},
+#ifdef __APPLE__
+    {u"Edge Smoothing", u"FXAA on the finished frame, HUD included.",
+#else
     {u"Edge Smoothing", u"The finished frame, HUD included. SMAA keeps more detail.",
+#endif
+#ifdef __APPLE__  // Metal has FXAA only
+     [] { return Choices{u"Off", u"FXAA"}; },
+#else
      [] { return Choices{u"Off", u"FXAA", u"SMAA"}; },
+#endif
      [] {
          const app::Settings& s = app::Get();
          return s.smaa ? uint32_t(2) : uint32_t(s.fxaa);
@@ -183,6 +185,10 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(tree_detail); },
      [](uint32_t i) { tree_detail = i != 0; }},
+    {u"Car Shadows", u"A sun shadow under every car, not only yours as on the console.",
+     [] { return Choices{u"Console", u"Every Car"}; },
+     [] { return uint32_t(cpu_car_shadows); },
+     [](uint32_t i) { cpu_car_shadows = i != 0; }},
 };
 
 // the reflection cube's far plane in metres (0 the console's 30), the ray traced scene's reach and ray length
@@ -241,6 +247,9 @@ const std::vector<Row> kPerformance = {
      [] { return Choices{u"Full", u"High", u"Medium", u"Low"}; },
      [] { return std::min<uint32_t>(water_far_detail, 3); },
      [](uint32_t i) { water_far_detail = i; }},
+    {u"Water Area Culling", u"Water reflections draw only what the visible water can show. Off costs frame rate.", OnOff,
+     [] { return uint32_t(water_area_cull); },
+     [](uint32_t i) { water_area_cull = i != 0; }},
     {u"Render Scale", u"The 3D picture's size, percent of the screen. More is slower.",
      [] { return Choices{u"25%", u"50%", u"75%", u"100%", u"125%", u"150%", u"175%", u"200%"}; },
      [] { return Nearest(kRender, app::Get().render_percent); },
@@ -270,6 +279,7 @@ const std::vector<Row> kPerformance = {
 };
 
 const std::vector<Row> kDisplay = {
+#ifndef __APPLE__  // the Mac runs on the display its window is on
     {u"Monitor", u"The display the game runs on.",
      [] {
          Choices c{u"Primary"};
@@ -282,6 +292,16 @@ const std::vector<Row> kDisplay = {
          app::Get().monitor = i;
          app::ApplyDisplay();
      }},
+#endif
+#ifdef __APPLE__  // full screen is macOS's own (a space of its own); fullscreen and borderless are the same there
+    {u"Display Mode", u"Applies at once.",
+     [] { return Choices{u"Window", u"Full Screen"}; },
+     [] { return app::Get().display_mode == app::DisplayMode::Windowed ? uint32_t(0) : uint32_t(1); },
+     [](uint32_t i) {
+         app::Get().display_mode = i ? app::DisplayMode::Borderless : app::DisplayMode::Windowed;
+         app::ApplyDisplay();
+     }},
+#else
     {u"Display Mode", u"Applies at once.",
      [] { return Choices{u"Fullscreen", u"Borderless", u"Window"}; },
      [] { return uint32_t(app::Get().display_mode) % 3; },
@@ -289,7 +309,8 @@ const std::vector<Row> kDisplay = {
          app::Get().display_mode = app::DisplayMode(i);
          app::ApplyDisplay();
      }},
-    {u"Resolution", u"Applies at once. The settings window lists them all.",
+#endif
+    {u"Resolution", u"Applies at once.",
      [] {
          Choices c{u"Desktop"};
          for (const app::Mode& m : ResolutionList()) c.push_back(Wide(std::to_string(m.width) + "x" + std::to_string(m.height)));
@@ -360,16 +381,6 @@ const std::vector<Row> kControls = {
     {u"Keyboard", u"The keyboard plays as controller 1.", OnOff,
      [] { return uint32_t(app::Get().keyboard); },
      [](uint32_t i) { app::Get().keyboard = i != 0; }},
-    {u"Mouse Look", u"The mouse moves the right stick.", OnOff,
-     [] { return uint32_t(app::Get().mouse_look); },
-     [](uint32_t i) { app::Get().mouse_look = i != 0; }},
-    {u"Invert Mouse", u"Up and down swapped.", OnOff,
-     [] { return uint32_t(app::Get().mouse_invert_y); },
-     [](uint32_t i) { app::Get().mouse_invert_y = i != 0; }},
-    {u"Mouse Sensitivity", u"The settings window goes up to 1000%.",
-     [] { return Choices{u"25%", u"50%", u"75%", u"100%", u"150%", u"200%", u"400%", u"800%"}; },
-     [] { return Nearest(kSens, app::Get().mouse_sensitivity); },
-     [](uint32_t i) { app::Get().mouse_sensitivity = kSens[i]; }},
     {u"Default Keys", u"Right sets every key back to its default.",
      [] { return Choices{u"Keep", u"Reset"}; },
      [] { return uint32_t(0); },
@@ -388,7 +399,7 @@ const std::vector<Row> kControls = {
      }},
 };
 
-const std::vector<Row> kWheel = {
+[[maybe_unused]] const std::vector<Row> kWheel = {
     {u"Invert Steering", u"For a wheel that reads backwards.", OnOff,
      [] { return uint32_t(app::Get().wheel_steer.invert); },
      [](uint32_t i) {
@@ -433,11 +444,7 @@ const std::vector<Row> kWheel = {
 };
 
 // the landing page's rows; a section's are its settings
-struct Section {
-    const char16_t* label;
-    const char16_t* help;
-    const std::vector<Row>* rows;
-};
+using Section = app::MenuSection;
 const Section kSections[] = {
     {u"Picture", u"Anti-aliasing, sharpening and textures.", &kPicture},
     {u"Detail", u"Car, mirror and tree detail.", &kDetail},
@@ -449,8 +456,10 @@ const Section kSections[] = {
 #endif
     {u"Display", u"Monitor, display mode, resolution and aspect ratio.", &kDisplay},
     {u"Game", u"Frame rate, draw distance, language and more.", &kGame},
-    {u"Controls", u"Keyboard and mouse.", &kControls},
+    {u"Controls", u"Keyboard and controller.", &kControls},
+#ifndef __APPLE__  // no steering wheels on the Mac yet
     {u"Wheel", u"Rotation, lock, dead zone and force feedback.", &kWheel},
+#endif
 };
 constexpr int kSectionCount = int(std::size(kSections));
 constexpr int kBindingsRow = kSectionCount, kQuitRow = kSectionCount + 1, kLandingRows = kSectionCount + 2;
@@ -647,6 +656,12 @@ void ApplySettingsEntry() {
         std::lock_guard lock(app::UiLock());
         app::Save();
     }
+}
+
+// the same sections for the settings window (GameInfo::menu)
+const std::vector<app::MenuSection>* Menu() {
+    static const std::vector<app::MenuSection> sections(std::begin(kSections), std::end(kSections));
+    return &sections;
 }
 
 }  // namespace pgr2

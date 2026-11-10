@@ -20,6 +20,7 @@ extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
 extern bool water_area_cull;
 extern uint32_t baked_ao;
 void InstallBakedAo();  // src/game/baked_ao.cpp
+const std::vector<app::MenuSection>* Menu();  // src/game/settings_entry.cpp
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
 void WheelFeel(input::WheelFeel& feel);             // src/game/wheel_feel.cpp
 float MusicLevel();                                 // src/game/hooks.cpp
@@ -201,4 +202,5 @@ const app::GameInfo app::kGame = {
     .auto_fills_screen = true,  // "From Screen" on an ultrawide: the 3D views widened to it, the HUD 16:9 (hooks.cpp ApplyAspect)
     .fill_follows_live = true,  // its views are reshaped when that changes in play (hooks.cpp Reshape)
     .fills_narrow_screens = true,  // a 16:10 screen: the 4:3 mode, its 3D views widened (src/game/hooks.cpp ApplyAspect)
+    .menu = pgr2::Menu,  // the Recomp page's sections, shown by the settings window too (src/game/settings_entry.cpp)
 };
