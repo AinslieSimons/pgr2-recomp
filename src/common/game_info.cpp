@@ -105,7 +105,7 @@ uint32_t reflection_range = 0;    // its object range: 0 the console's (a tenth)
 bool reflection_every_frame = true;   // every cube face every frame above 30, not each at 30 a second (src/game/hooks.cpp)
 bool car_cubes = true;            // a reflection cube of its own for every other car
 uint32_t baked_ao = 60;           // the city's baked ambient occlusion, percent as baked, 0 off; Metal (src/game/baked_ao.cpp)
-uint32_t car_cube_every = 3;      // each car's cube is redrawn one frame in this many
+uint32_t car_cube_every = 1;      // each car's cube is redrawn one frame in this many (1: every frame)
 uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
 uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
 bool full_textures = true;  // every streamed texture at its full size from the city load (src/game/full_textures.cpp)
@@ -166,7 +166,7 @@ const app::GameInfo app::kGame = {
                 {"car_cubes", &pgr2::car_cubes, nullptr, "Every car reflects from where it is",
                  "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
                 {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
-                 "3 by default (1 to 8): a higher number costs less frame rate, the cars' reflections update less often; at once."},
+                 "1 (every frame) by default, up to 8: a higher number costs less frame rate, the cars' reflections update less often; at once."},
                 {"baked_ao", nullptr, &pgr2::baked_ao, "Baked ambient occlusion (%)",
                  "60 by default, 0 off: the city's ambient occlusion, ray traced in the background as streets are first seen and kept in metalcache/ao; macOS (Metal) only; at once."},
                 {"traced_range", nullptr, &pgr2::traced_range, "Ray traced cars range (m)",
