@@ -37,6 +37,24 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-09 - menus at 4:3, title 2D at 4:3, 16:10 filled, tachometer lines
+
+- Menus: no menu code reads the widescreen flag 0x48614C (its readers: the 3D views, the race HUD 0xE5CF0, 0xD95B0,
+  0xA7E20), so a console in widescreen sent the 4:3 menus out stretched. Outside a race (0x49E110 clear) the frame is
+  now 4:3 with bars each side (SDK app::g_frame_aspect_cap; the menus' 3D views follow through ApplyAspect). Option
+  menus_4x3 (on), F1 Display row "Menus at 4:3". The attract demo (title screen, PGR 2 Demos; 0x38384C) stays wide
+  and its 2D is squeezed into the centred 4:3 (SDK gpu::State::hud_aspect).
+- The race HUD at 16:9 is the game's own widescreen layout (0xE5CF0 moves and resizes elements when the flag is set;
+  the gear dial's hub comes out round), so it is left as the console shows it.
+- 16:10: Harry's aspect-16x10 work brought over by hand (SDK fills_narrow_screens, app::HudAspect, the latched TV
+  mode; PGR2's 4:3 views widened from 0x2790FC). Mac run at 2560x1600: race filled at 1.6, HUD 4:3 in the middle,
+  mirror narrowed, menus 4:3 with bars.
+- Tachometer lines (sharp 2D): the numerals 0 2 4 ... are packed in a row of 2209006976's sheet and each quad ends at
+  the centre of the gap's last texel; the enlarged copy moved the next numeral's edge half a texel into it. SDK
+  UpscalePicture: the middle pixels of a texel under half covered keep at most its alpha. Lines gone in a race run.
+- Muted runs on the Mac (race and demos recordings). Windows to confirm, notably the live frame shape switch at each
+  menu and race change.
+
 ### 2026-11-09 - Metal: baked ambient occlusion for the city
 New: `sdk/runtime/gpu/baked_ao.{h,mm}`, `src/game/baked_ao.cpp`, setting `baked_ao` (60%, F1 > Picture "Ambient Occlusion", `PGR2_BAKED_AO`). MACOS.md, "Baked ambient occlusion", has the method. The city's static draws are known by vertex data, index address and count (a census of the demos before the render thread's copy: 36,663 keys, triangles never changed under one); their triangles are baked in the background against everything the city has shown and kept in `metalcache/ao`. Pixel shaders read the value by `[[primitive_id]]` and barycentrics; Apple GPUs give a strip's odd triangles their barycentrics in the bake's own order (the other order drew diagonal seams).
 Grey roads fixed: the city is wound either way (a probe of Hong Kong's road: normal straight down, one layer, 4 of 400 rays upward hit anything) and every face on screen reports front facing (`XBE_AO_DEBUG` views of front facing and of strips), so neither the winding nor the screen says which side is seen; a road read its underside. Now each triangle is baked on the side of the camera that first drew its mesh (c[126]; 16 to 20% of triangles are behind their winding), and hits on near-parallel layers within 25 cm are skipped. The road reads open, barriers and rails shaded only in their creases; one side halves the bake (Hong Kong 6.1 s).

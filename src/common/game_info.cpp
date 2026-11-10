@@ -11,7 +11,7 @@
 void InstallDrawFilter();  // src/game/draw_filter.cpp
 
 namespace pgr2 {
-extern bool skip_intro, hide_hud, dlc, cpu_car_shadows;
+extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
@@ -83,6 +83,7 @@ void Init() {
 namespace pgr2 {
 uint32_t race_fps = 30;  // the frame rate of races, 30 as on the console (src/game/hooks.cpp)
 bool cpu_car_shadows = true;  // every car with the followed car's sun shadow (src/game/car_shadows.cpp)
+bool menus_4x3 = true;   // the menus at 4:3 with bars each side on a widescreen frame (src/game/hooks.cpp)
 bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
 uint32_t fov_percent = 100;  // the race cameras' field of view, percent of the console's (src/game/hooks.cpp)
@@ -126,6 +127,8 @@ const app::GameInfo app::kGame = {
     // game settings kept in the settings file
     .options = {{"skip_intro", &pgr2::skip_intro, nullptr, "Skip intro movies", "At the next start."},
                 {"cpu_car_shadows", &pgr2::cpu_car_shadows, nullptr, "Sun shadows on every car", "Not on the console, where only the followed car has one; at once."},
+                {"menus_4x3", &pgr2::menus_4x3, nullptr, "Menus at 4:3",
+                 "On by default: the menus, laid out for 4:3, keep their shape with bars each side on a wide screen; races stay wide. Off, they stretch as on a console set to widescreen; at once."},
                 {"hide_hud", &pgr2::hide_hud, nullptr, "Hide the race HUD", "For screenshots and replays; at once."},
                 {"fov_percent", nullptr, &pgr2::fov_percent, "Race camera field of view (%)",
                  "100 is the console's; 50 to 200, at once."},
@@ -197,4 +200,5 @@ const app::GameInfo app::kGame = {
     .languages = {1, 2, 3, 4, 5, 6, 7, 8},  // the disc's; Portuguese has text files but the game runs it as English              // menus, HUD and text drawn from enlarged, sharpened copies of their textures
     .auto_fills_screen = true,  // "From Screen" on an ultrawide: the 3D views widened to it, the HUD 16:9 (hooks.cpp ApplyAspect)
     .fill_follows_live = true,  // its views are reshaped when that changes in play (hooks.cpp Reshape)
+    .fills_narrow_screens = true,  // a 16:10 screen: the 4:3 mode, its 3D views widened (src/game/hooks.cpp ApplyAspect)
 };

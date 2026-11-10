@@ -245,28 +245,61 @@ X86_FUNC(sub_001859A0) {
     pgr2::MirrorRangeAfter(cam);
 }
 
-// ultrawide: the game's widescreen 3D views (race cameras 0x1857F0, garage, showroom: 0x88480, 0x16E960, 0x184530)
-// take their aspect from the constant 0x2790F8 (16:9; 0x2790FC is 4:3) when the widescreen flag 0x48614C is set;
-// it is set to the shape the frame is shown at, so the view widens instead of stretching. Each view keeps the aspect it
-// was set up with at +0x38, so when the shape changes in play (16:9 against filling the screen: GameInfo::
-// fill_follows_live) the views set up since are reshaped too (Views below), not left stretched until the next start.
+// ultrawide: the game's 3D views (race cameras 0x1857F0, garage, showroom: 0x88480, 0x16E960, 0x184530) take their
+// aspect from the constant 0x2790F8 (16:9) when the widescreen flag 0x48614C is set, else from 0x2790FC (4:3; 0x88AD0
+// reads only that one); the one in use is set to the shape the frame is shown at, so the view widens instead of
+// stretching. A 16:10 screen runs the 4:3 mode widened to 1.6 (GameInfo::fills_narrow_screens). Each view keeps the
+// aspect it was set up with at +0x38, so when the shape changes in play (16:9 against filling the screen: GameInfo::
+// fill_follows_live; a 16:10 window resized to 16:9; the menus at 4:3, MenuAspect) the views set up since are reshaped
+// too (Views below), not left stretched until the next start.
 void Reshape(float aspect);
 
+// menus_4x3: the menus are 640x480 pictures laid out for 4:3, and no menu code reads the widescreen flag (its readers are
+// the views above, the race HUD 0xE5CF0, 0xD95B0 and the setup 0xA7E20), so a console set to widescreen sends them out
+// to be stretched across the TV. Outside a race (0x49E110 clear) the frame is 4:3 with bars each side
+// (app::g_frame_aspect_cap); the menus' own 3D views (garage, showroom) follow it through ApplyAspect. The title screen
+// and the PGR 2 Demos are the attract demo (0x38384C), a race: its 3D stays wide and its 2D (the logo, PRESS START,
+// the city's name) is squeezed into the centred 4:3 (gpu::State::hud_aspect), a bar from an edge still reaching it.
+namespace pgr2 {
+extern bool menus_4x3;
+}
+void MenuAspect() {
+    const bool racing = kernel::G<uint8_t>(0x49E110) != 0, attract = racing && kernel::G<uint8_t>(0x38384C) != 0;
+    const int mode = !pgr2::menus_4x3 ? 0 : !racing ? 1 : attract ? 2 : 0;
+    const float cap = mode == 1 ? 4.0f / 3.0f : 0.0f;
+    app::g_frame_aspect_cap.store(cap, std::memory_order_relaxed);
+    d3d::State().hud_aspect = mode == 2 ? 4.0f / 3.0f : 0.0f;
+    static int last = -1, said = 0;
+    if (mode != last && said++ < 30) {
+        const char* text[] = {"the frame wide", "menus: the frame at 4:3", "attract demo: the frame wide, its 2D at 4:3"};
+        LOGR("pgr2: %s", text[mode]);
+    }
+    last = mode;
+}
+
 void ApplyAspect() {
-    float want = std::max(app::FrameAspect(), 16.0f / 9.0f);
-    float cur;
-    std::memcpy(&cur, &kernel::G<uint32_t>(0x2790F8), 4);
-    if (std::fabs(cur - want) < 1e-4f) return;
-    std::memcpy(&kernel::G<uint32_t>(0x2790F8), &want, 4);
-    LOGR("pgr2: widescreen 3D views at %.3f:1", want);
-    Reshape(want);
+    // the frame's shape: 16:9 or wider (16:10 in the 4:3 mode), 4:3 in the menus (MenuAspect)
+    const float frame = app::FrameAspect();
+    const bool wide = app::Widescreen();
+    const float aspects[2] = {wide ? frame : 16.0f / 9.0f, wide ? 4.0f / 3.0f : std::max(frame, 4.0f / 3.0f)};
+    const uint32_t at[2] = {0x2790F8, 0x2790FC};
+    for (int i = 0; i < 2; i++) {
+        float cur;
+        std::memcpy(&cur, &kernel::G<uint32_t>(at[i]), 4);
+        if (std::fabs(cur - aspects[i]) < 1e-4f) continue;
+        std::memcpy(&kernel::G<uint32_t>(at[i]), &aspects[i], 4);
+        static int said = 0;
+        if (said++ < 40) LOGR("pgr2: %s 3D views at %.3f:1", i ? "4:3" : "widescreen", aspects[i]);
+        if (i == (wide ? 0 : 1)) Reshape(aspects[i]);
+    }
 }
 
 // ultrawide: a camera (0x1857F0, thiscall: x, y, w, h of its box on the 640 wide screen, ..., an aspect or 0 at +0x1C)
-// keeps the box at +0x28..+0x34 and its aspect, 0x2790F8 times the box's shape, at +0x38. The rear view mirror in the
-// bumper and hood views is one, 220,38 200x70: on a frame wider than 16:9 its box stretched with the screen and ran into
-// the HUD. A box touching neither side keeps the aspect it has at 16:9, and its viewport (set from the box by 0x185640)
-// is narrowed about the centre by 16:9 / the aspect used, as the HUD is (gpu::HudSqueeze). The box itself stays: the
+// keeps the box at +0x28..+0x34 and its aspect, the mode's constant times the box's shape, at +0x38. The rear view mirror
+// in the bumper and hood views is one, 220,38 200x70: on a frame wider than the mode's 2D (16:9, or 4:3 widened to a
+// 16:10 screen) its box stretched with the screen and ran into the HUD. A box touching neither side keeps the aspect it
+// has unwidened, and its viewport (set from the box by 0x185640) is narrowed about the centre by the 2D's shape / the
+// aspect used, as the HUD is (gpu::HudSqueeze). The box itself stays: the
 // mirror's 2D frame is placed from it and squeezed with the HUD, so narrowing the box squeezed the frame twice.
 // Full width and split screen views reach a side and keep theirs.
 // The garage's view (0x88480, thiscall on the camera) and the full screen view 0x184530 (thiscall: 1 saves the camera's
@@ -283,17 +316,21 @@ struct View {
 std::unordered_map<uint32_t, View> views;
 std::pair<uint32_t, View> saved{0, {}};  // 0x184530's saved camera
 
+bool Wide() { return kernel::G<uint8_t>(0x48614C) != 0; }
+// the shape the mode's 2D is laid out for, and the constant its views read
+float Laid() { return Wide() ? 16.0f / 9.0f : 4.0f / 3.0f; }
 float Aspect() {
     float a;
-    std::memcpy(&a, &kernel::G<uint32_t>(0x2790F8), 4);
+    std::memcpy(&a, &kernel::G<uint32_t>(Wide() ? 0x2790F8 : 0x2790FC), 4);
     return a;
 }
 
 void Fit(uint32_t cam, View& v, float aspect) {
     float own = v.shape * aspect;
     narrowed.erase(cam);
-    if (v.box && aspect > 16.0f / 9.0f + 1e-3f && v.x > 0 && v.x + v.w < 640) {
-        float k = 16.0f / 9.0f / aspect;
+    const float laid = Laid();
+    if (v.box && aspect > laid + 1e-3f && v.x > 0 && v.x + v.w < 640) {
+        float k = laid / aspect;
         int32_t nx = int32_t(std::lround(320 + (v.x - 320) * k)), nw = std::max(1, int32_t(std::lround(v.w * k)));
         narrowed[cam] = {nx, nw};
         own *= k;
@@ -305,7 +342,7 @@ void Fit(uint32_t cam, View& v, float aspect) {
     v.own = own;
 }
 
-// a view the game just set up from 0x2790F8: kept, and fitted to the frame
+// a view the game just set up from the mode's constant: kept, and fitted to the frame
 void Track(uint32_t cam, bool box, int32_t x, int32_t w) {
     float aspect = Aspect(), own;
     std::memcpy(&own, &kernel::G<uint32_t>(cam + 0x38), 4);
@@ -343,7 +380,7 @@ X86_FUNC(sub_001857F0) {
     __imp__sub_001857F0(ctx, base);
     narrowed.erase(cam);
     views.erase(cam);
-    if (!kernel::G<uint8_t>(0x48614C) || given) return;
+    if (given) return;
     Track(cam, true, x, w);
 }
 
@@ -353,7 +390,7 @@ X86_FUNC(sub_00088480) {
     __imp__sub_00088480(ctx, base);
     narrowed.erase(cam);
     views.erase(cam);
-    if (kernel::G<uint8_t>(0x48614C) && Same(cam, Aspect())) Track(cam, false, 0, 640);
+    if (Same(cam, Aspect())) Track(cam, false, 0, 640);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00184530);
@@ -367,7 +404,6 @@ X86_FUNC(sub_00184530) {
     __imp__sub_00184530(ctx, base);
     narrowed.erase(cam);
     views.erase(cam);
-    if (!kernel::G<uint8_t>(0x48614C)) return;
     if (full) {
         Track(cam, false, 0, 640);
     } else if (saved.first == cam) {  // the camera's own view back, fitted to the frame as it is now
@@ -465,6 +501,7 @@ X86_FUNC(sub_000D90F0) {
     // post-race screens came out garbled with them a frame late
     gpu::g_reports_wait.store(kernel::G<uint8_t>(0x383984) != 0, std::memory_order_relaxed);
     Pillarbox();
+    MenuAspect();
     ApplyAspect();
     __imp__sub_000D90F0(ctx, base);
     ApplyFov();

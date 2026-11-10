@@ -40,6 +40,7 @@ extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflect
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao;
+extern bool menus_4x3;
 void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
 
 namespace {
@@ -315,6 +316,9 @@ const std::vector<Row> kDisplay = {
      [] { return Choices{u"From Screen", u"4:3", u"16:9", u"Fill Screen"}; },
      [] { return app::Get().aspect % 4; },
      [](uint32_t i) { app::Get().aspect = i; }},
+    {u"Menus at 4:3", u"Menus keep their shape with bars each side. Off stretches them.", OnOff,
+     [] { return uint32_t(menus_4x3); },
+     [](uint32_t i) { menus_4x3 = i != 0; }},
 };
 
 const std::vector<Row> kGame = {
