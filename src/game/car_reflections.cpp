@@ -369,6 +369,10 @@ void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust) {
         adjust.trace_self = uint32_t(was - g_last.data()) + 1;
     }
     adjust.trace_reflect = true;
+    // the depth from w at the vertices (gpu::DrawAdjust::raster_w): pixels hidden by what is drawn before them, or by
+    // an opaque pixel after them, then trace no ray (the demos: 4.7 ms over untraced down to 3.1, with the backend's
+    // cull and gate to 1.3)
+    adjust.raster_w = true;
     std::memcpy(adjust.trace_from, from.m, sizeof(from.m));
     std::memcpy(adjust.trace_turn, turn.m, sizeof(turn.m));
     adjust.trace_range[0] = float(std::clamp<uint32_t>(traced_ray, 5, 1000));  // metres (traced_ray, 60 by default)

@@ -37,6 +37,46 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-11 - cheaper ray traced reflections; a crash leaving a race
+
+**Ray traced reflections, cheaper** (SDK Metal backend, `src/game/car_reflections.cpp`). Three changes, all on with traced reflections:
+
+- **Rasterised W for traced draws.** Traced car draws take their W-buffer depth from the vertex shader: exact at each vertex and interpolated across the screen, never nearer than the pixel's own w. Their pixel shaders no longer write depth (`gpu::DrawAdjust::raster_w`, vertex `hud.w == 2`). A shader that writes depth runs before the depth test and outside Apple's hidden-surface removal, so every hidden car pixel used to trace its ray.
+- **Per-draw cull.** A draw whose car has no other car within the ray's reach is drawn untraced. The others test only their nearby boxes, at most four, from constants (`DrawConstants::tbox`); `XBE_TRACE_DRAWCULL=0` turns this off.
+- **Gate.** Each opaque traced draw is drawn three times:
+  1. with the cube shader, which has no ray code;
+  2. a gate draw (`PixelKey::trace_gate`, `kPsTracedGate`) that writes no colour and marks stencil bit 7 where the pixel's ray meets a box;
+  3. the ray shader, at depth EQUAL and only on marked pixels, clearing the bit.
+
+  Any `intersect` in a fragment shader cost about 1.1 ms a frame even when never reached, and the gate removes that for every pixel whose ray can't hit a car. `XBE_TRACE_GATE=0` turns it off.
+
+**Evidence.** Measured on the PGR2 demos at 2560x1600, render scale 3.33, MSAA 4x, M4 Pro, with `XBE_PERF`, counting the Hong Kong, Washington and Florence racing (Chicago and Barcelona have one car each):
+
+| | GPU ms a frame (mean) | p95 |
+|---|---|---|
+| traced, before | 19.0-19.8 | 33-35 |
+| traced, now | 16.0-16.15 (three runs) | 23.4-24.0 |
+| untraced | 14.6-14.85 | 20 |
+
+So the tracing overhead falls from +4.7 to +1.3 ms over untraced. Washington goes from 24.1 to 18.1 ms. Checked again after the test switches were removed, the next day: traced 16.65 and 16.70 ms, untraced 14.94 ms that day (+1.7).
+
+- **Visual checks.** The hit view (`XBE_TRACE_DEBUG=1`) puts its hits in the same places with and without the gate, and the normal shots show no artefacts.
+- **Tried and dropped:**
+  - one ray per 2x2 quad: slower;
+  - the acceleration structure's build flags: no gain; the scene is about 14k triangles, built in 0.08 ms;
+  - a 30 m ray: no gain.
+- **Played by hand on this build:** races with no issues seen.
+
+**Crash leaving a race** (`src/game/hooks.cpp`). `Reshape`, at the menus' change to 4:3, read a camera the game had freed and decommitted, which ended in SIGBUS in `Same`. `Same` now checks the camera's memory is committed (`mem::IsCommitted`).
+
+**Open.** In the bumper, hood and cockpit views the player's car shows in no other car's reflection:
+
+- **Ray tracing:** the game does not draw its body in those views, so it is not in the traced scene.
+- **The cubes:** with "Cars in Reflections" off they hold no cars.
+- **The tried fix:** treating the followed car as drawn in other cars' cube passes did not show it, even with Cars in Reflections on. It is not in this commit.
+
+The full measurements are in `.local/research/rt-results.md` in the rt-optimise worktree.
+
 ### 2026-11-09 - mirror corruption, 16:10 full screen, frame pacing
 
 - Coloured blocks in the mirror and a flickering HUD (Sydney at night, MSAA 4x, full screen): the Metal renderer's three
