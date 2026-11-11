@@ -352,6 +352,8 @@ void Track(uint32_t cam, bool box, int32_t x, int32_t w) {
 }
 
 bool Same(uint32_t cam, float own) {
+    // a camera freed since (a race left for the menus) may be decommitted: reading it faulted (SIGBUS in Reshape)
+    if (!mem::IsCommitted(cam + 0x38)) return false;
     float now;
     std::memcpy(&now, &kernel::G<uint32_t>(cam + 0x38), 4);
     return now == own;
