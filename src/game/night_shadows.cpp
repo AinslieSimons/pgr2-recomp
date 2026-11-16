@@ -8,7 +8,7 @@
 // kLampRadius across the road plane), each pass's vertex colours raised to the power 1 / kSamples, so where every sample's shadow
 // falls the road is as dark as before and the edge fades out; 2 soft and from the lamp: the same with w 1, the lamp a point, so a
 // shadow lengthens as the car leaves the lamp and points away from it.
-// 3 (default) the day's shadow map from each lamp: for each light 0x32D10 keeps, the sun's direction (0x49EE8C, the way the light
+// 3 the day's shadow map from each lamp: for each light 0x32D10 keeps, the sun's direction (0x49EE8C, the way the light
 // travels) and colour (0x49EEA8) are set to the lamp's, the car's depth map is drawn (0x1892E0) and its ground mesh (0x21920: the
 // road's collision triangles near the car, redrawn as a multiply, cut by the map's comparison) shades it; then the sun is put back.
 // The mesh's shade is base / (base + colour x -dir.y) per channel; the colour is chosen to give this light's shade to the power
@@ -16,7 +16,10 @@
 // shadow compounds with the others' (draw_filter.cpp leaves its one-shadow stencil off at night).
 // street_light_reach (percent, default 200): each light's radius (+0x28, +0x2C) scaled for the pass, so more lights cast and farther;
 // the ground mesh's 4 m radius grows with it (12 m at most). About 3x the shadows of the game's own reach at 200 (a recorded race).
-// Cost: one depth map and mesh per car per light, 300 to 800 a second in a race: a frame rate dip.
+// Cost: one depth map and mesh per car per light, 300 to 800 a second in a race: a frame rate dip. Mode 3 also leaves the last
+// lamp's map where the game's car shading reads the sun's (the followed car's windows go dark).
+// 4 (default) as 3 with each car's maps kept, one per direction from the car (below): about 6 map draws a frame instead of 660, the
+// street-light pass 1.2 ms instead of 2.0 and the frame's work 12% less (a recorded race, tools/perf/shadow_report.py).
 // Each matrix is built as the XDK's D3DXMatrixShadow builds it (its sign is the opposite of the D3DX documentation's) and scaled to
 // end with the w the game's own ends with (0x30AE0 divides the game's by d): the draw is W-buffered, so w is its depth, and a
 // different w put the shadow behind the road or behind the camera. With one sample, no radius and mode 1 the matrix equals the
@@ -63,6 +66,8 @@ X86_EXTERN_FUNC(__imp__sub_0019430F);
 X86_EXTERN_FUNC(__imp__sub_00030AE0);
 X86_EXTERN_FUNC(__imp__sub_000C7C00);
 X86_EXTERN_FUNC(__imp__sub_000BF3F0);
+X86_EXTERN_FUNC(__imp__sub_00022470);
+X86_EXTERN_FUNC(__imp__sub_0019440D);
 
 namespace {
 using kernel::R32;
@@ -86,6 +91,7 @@ constexpr uint32_t kDrawMap = 0x1892E0;          // thiscall (car, map scale 1.0
 constexpr uint32_t kGroundMesh = 0x21920;        // thiscall on the car
 constexpr uint32_t kCarAmbient = 0x1510;         // r g b a: the car's ambient, the shade's base (0x21920: base / (base + sun))
 constexpr uint32_t kCarFromPointer = 0x474C;     // 0x32D10's per car pointer (ebx at the draw) is the car + this
+constexpr uint32_t kCarRoof = 0xB0;             // the car's height (metres)
 constexpr float kMinHeight = 3.0f;               // a lamp nearer the road plane than this is treated as this high (no endless shadows)
 
 using Matrix = float[16];  // D3DX layout: row vectors, rows of 4
@@ -93,6 +99,9 @@ using Matrix = float[16];  // D3DX layout: row vectors, rows of 4
 bool g_pass = false;     // inside 0x32D10
 bool g_inner = false;    // our own calls of the draw
 uint32_t last_car = 0, light_index = 0;  // testing: which of a car's lights this is, in the pass
+bool g_in_map = false;   // our call of the map draw (0x1892E0) is running
+float g_fit_radius = 0;  // the ground mesh's radius for this light's shadow (PGR2_MESH_FIT), 0 the reach's
+uint64_t g_map_ticks = 0, g_mesh_ticks = 0;  // testing: time in our map and mesh calls (PGR2_HL_LOG)
 float g_plane[4] = {0};  // the road plane as the game gave it (normalised here)
 float g_lamp[3] = {0};   // the light's place
 float g_dir[4] = {0};    // the direction the game passed (w 0)
@@ -133,6 +142,310 @@ void Multiply(const Matrix a, const Matrix b, Matrix out) {
         }
 }
 
+
+// ---- mode 4: each car's depth maps kept, one per direction from the car, drawn once and used by every light near that direction.
+// A map is drawn by the game's own 0x1892E0 with the sun pointed along the view, into a tile of our own (a D16 surface and texture
+// in kTileArena), its scale chosen so that the viewport is the tile. Its end builds the texture matrix the ground mesh reads at
+// c[0x8F]: M = view^-1 x light view x projection x bias, transposed by 0x19440D, where the hook keeps it. Kept relative to the car,
+// K = car x view x M (the car's world and the camera's view as the map was drawn), a later frame's matrix is
+// view_now^-1 x car_now^-1 x K, uploaded before the ground mesh (0x21920) is drawn with the tile's texture bound in the map's place.
+// Views: 16 azimuths x 5 elevations + straight down; the nearest is used, sheared to the lamp's own direction (ShearToward). A tile
+// is drawn when first wanted (at most 4 a frame, PGR2_TILE_BUDGET; until then the car's nearest tile within two views stands in) and again after
+// 20 s; the slots (about 190 of 512x512) go least recently used first. The ground mesh draws with the states 0x1892E0 leaves (cull
+// 0x900, Z as W) and the camera's transforms, else nothing shows; its stage 0 filtered, for 2x2 comparisons (softer edges).
+constexpr uint32_t kMapSurface = 0x486190;       // the map's depth surface, as 0x1892E0 sets it as the render target
+constexpr uint32_t kMapColour = 0x486198;        // its colour surface (no data)
+constexpr uint32_t kMapTexture = 0x486194;       // the map's texture, bound by 0x21920
+constexpr uint32_t kMapSize = 0x4861B4;          // its width and height (1024); the viewport is this x the scale
+constexpr uint32_t kCamera = 0x3CD804;           // the camera being drawn; its view at +0xF0
+constexpr uint32_t kCameraView = 0xF0;
+constexpr uint32_t kCullModeCopy = 0x486146, kCullMap = 0x900;  // the game's copy of the cull mode (16 bits), the map's
+constexpr uint32_t kZEnableCopy = 0x486148, kZEnableW = 2;      // its copy of ZEnable (8 bits); 2 W-buffered
+constexpr uint32_t kSetCullMode = 0x1C11D0, kSetZEnable = 0x1C20F0;  // D3DDevice_SetRenderState_CullMode / _ZEnable (stdcall, value)
+constexpr uint32_t kStage0 = 0x1D0540;         // D3D's deferred texture states, stage 0 (32 a stage; config/game.toml)
+constexpr uint32_t kTssMag = 3, kTssMin = 4, kTexfLinear = 2;
+constexpr uint32_t kDirtyFlags = 0x1D0538, kDirtyStage0 = 1;  // stage 0's states sent with the next draw (as 0x20580 marks them)
+constexpr uint32_t kCameraSetup = 0x185640;      // thiscall on the camera: its transforms for the draws that follow
+constexpr uint32_t kSetSurfaceHeader = 0x1E0604; // XGSetSurfaceHeader (width, height, format, header, data, pitch), as 0x178AF5
+constexpr uint32_t kSetTextureHeader = 0x1E0645; // XGSetTextureHeader (w, h, levels, usage, format, pool, header, data, pitch)
+constexpr uint32_t kSetVSConstant = 0x1BFEF0;    // fastcall (ecx register, edx data; count), as 0x189C51
+constexpr uint32_t kTextureMatrixRegister = 0x8F;  // the map's texture matrix, 4 registers (0x189C4C)
+constexpr uint32_t kFromTranspose = 0x189C43;    // 0x1892E0's call of D3DXMatrixTranspose returns here
+constexpr uint32_t kCarWorld = 0x18;             // the car's vtable: thiscall, its world matrix
+constexpr uint32_t kFormatDepth = 0x30, kFormatColour = 0x11;  // LIN_D16 (as the map's texture), the map's colour surface
+constexpr uint32_t kTileArena = 0x72000000, kTileArenaBytes = 0x0C000000;  // past planar_water.cpp's
+constexpr int kAzimuths = 16;
+constexpr float kElevations[] = {6, 18, 32, 50, 70};  // degrees below the car's level, the way the light travels
+constexpr int kElevationCount = int(sizeof(kElevations) / sizeof(kElevations[0]));
+constexpr int kViews = kAzimuths * kElevationCount + 1;  // and straight down
+
+struct Tile {
+    uint32_t car = 0;
+    int view = -1;
+    uint32_t used = 0, made = 0;  // frames
+    uint32_t surface = 0, colour = 0, texture = 0, data = 0;
+    bool ready = false;
+    Matrix k;
+};
+std::vector<Tile> g_tiles;
+uint32_t g_tile_size = 0, g_tile_bytes = 0, g_frame = 0, g_made_this_frame = 0;
+bool g_tiles_failed = false, g_capture = false, g_captured = false;
+Matrix g_captured_m;
+uint32_t g_tiles_made = 0, g_tiles_reused = 0, g_tiles_missing = 0;  // testing (PGR2_HL_LOG)
+uint32_t g_upload = 0;  // guest memory for the uploaded matrix
+
+// the view's direction in the car's space: the way the light travels, y down
+void ViewDirection(int view, float out[3]) {
+    if (view == kViews - 1) {
+        out[0] = 0, out[1] = -1, out[2] = 0;
+        return;
+    }
+    const float el = kElevations[view / kAzimuths] * 3.14159265f / 180.0f, az = float(view % kAzimuths) * 6.2831853f / kAzimuths;
+    out[0] = std::cos(el) * std::cos(az), out[1] = -std::sin(el), out[2] = std::cos(el) * std::sin(az);
+}
+
+int NearestView(const float dir[3]) {
+    int best = 0;
+    float best_dot = -2;
+    for (int v = 0; v < kViews; v++) {
+        float d[3];
+        ViewDirection(v, d);
+        const float dot = d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2];
+        if (dot > best_dot) best_dot = dot, best = v;
+    }
+    return best;
+}
+
+bool Invert(const Matrix m, Matrix out) {
+    float a[4][8];
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 8; c++) a[r][c] = c < 4 ? m[r * 4 + c] : (c - 4 == r ? 1.0f : 0.0f);
+    for (int c = 0; c < 4; c++) {
+        int p = c;
+        for (int r = c + 1; r < 4; r++)
+            if (std::fabs(a[r][c]) > std::fabs(a[p][c])) p = r;
+        if (std::fabs(a[p][c]) < 1e-12f) return false;
+        if (p != c)
+            for (int k = 0; k < 8; k++) std::swap(a[p][k], a[c][k]);
+        const float inv = 1.0f / a[c][c];
+        for (int k = 0; k < 8; k++) a[c][k] *= inv;
+        for (int r = 0; r < 4; r++)
+            if (r != c) {
+                const float f = a[r][c];
+                if (f != 0)
+                    for (int k = 0; k < 8; k++) a[r][k] -= f * a[c][k];
+            }
+    }
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) out[r * 4 + c] = a[r][c + 4];
+    return true;
+}
+
+void ReadMatrix(uint32_t va, Matrix m) { std::memcpy(m, &kernel::G<uint8_t>(va), sizeof(Matrix)); }
+
+// the car's world matrix (row vectors: a point of the car x it is the world's), its last column made 0 0 0 1
+void CarWorld(X86Context& ctx, uint32_t car, Matrix m) {
+    ctx.ecx = car;
+    ReadMatrix(kernel::CallGuest(ctx, R32(R32(car) + kCarWorld), {}), m);
+    m[3] = m[7] = m[11] = 0, m[15] = 1;
+}
+
+bool EnsureTiles(X86Context& ctx) {
+    if (!g_tiles.empty()) return true;
+    if (g_tiles_failed) return false;
+    g_tiles_failed = true;
+    static const uint32_t want = std::getenv("PGR2_TILE") ? uint32_t(std::atoi(std::getenv("PGR2_TILE"))) : 512;
+    const uint32_t size = R32(kMapSize);
+    if (!size) return false;
+    g_tile_size = std::clamp<uint32_t>(want, (size + 3) / 4, size);  // 0x1892E0 keeps its scale at least 0.25
+    // the renderer takes any depth target as 4 bytes a pixel (metal.mm EnsureTarget) and reads that much of it: room for it
+    g_tile_bytes = (0x1000 + g_tile_size * g_tile_size * 4 + 0xFFF) & ~0xFFFu;
+    const uint32_t slots = std::min<uint32_t>(kTileArenaBytes / g_tile_bytes, 8 * kViews);
+    g_tiles.resize(slots);
+    g_upload = mem::AllocSystem(sizeof(Matrix), 16);
+    g_tiles_failed = false;
+    LOGR("street light shadows: %u cached map tiles of %ux%u (the map is %u)", slots, g_tile_size, g_tile_size, size);
+    return true;
+}
+
+// a slot's headers and pixels, made the first time it is used
+bool PrepareSlot(X86Context& ctx, Tile& t, size_t index) {
+    if (t.surface) return true;
+    const uint32_t at = kTileArena + uint32_t(index) * g_tile_bytes;
+    if (!mem::Commit(at, g_tile_bytes)) return false;
+    t.surface = at, t.colour = at + 0x40, t.texture = at + 0x80, t.data = at + 0x1000;
+    std::memset(&kernel::G<uint8_t>(t.data), 0xFF, g_tile_size * g_tile_size * 2);  // the far plane: a lost target casts nothing
+    const uint32_t s = g_tile_size;
+    kernel::CallGuest(ctx, kSetSurfaceHeader, {s, s, kFormatDepth, t.surface, t.data, s * 2});
+    kernel::CallGuest(ctx, kSetSurfaceHeader, {s, s, kFormatColour, t.colour, 0, 0});
+    kernel::CallGuest(ctx, kSetTextureHeader, {s, s, 1, 0, kFormatDepth, 0, t.texture, t.data, s * 2});
+    return true;
+}
+
+// the car's map along a view, drawn into a tile: true when the matrix was caught
+bool MakeTile(X86Context& ctx, Tile& t, uint32_t car, int view) {
+    Matrix world;
+    CarWorld(ctx, car, world);
+    float local[3], dir[3];
+    ViewDirection(view, local);
+    for (int j = 0; j < 3; j++) dir[j] = local[0] * world[j] + local[1] * world[4 + j] + local[2] * world[8 + j];
+    const float dl = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    for (float& c : dir) c = dl > 0 ? c / dl : 0;
+    uint8_t sun[12];
+    std::memcpy(sun, &kernel::G<uint8_t>(kSunDirection), 12);
+    std::memcpy(&kernel::G<uint8_t>(kSunDirection), dir, 12);
+    const uint32_t surface = R32(kMapSurface), colour = R32(kMapColour);
+    kernel::W32(kMapSurface, t.surface);
+    kernel::W32(kMapColour, t.colour);
+    const float scale = float(g_tile_size) / float(R32(kMapSize));
+    uint32_t scale_bits;
+    std::memcpy(&scale_bits, &scale, 4);
+    g_capture = true, g_captured = false;
+    g_in_map = true;
+    ctx.ecx = kShadowObject;
+    kernel::CallGuest(ctx, kDrawMap, {car, scale_bits});
+    g_in_map = false;
+    g_capture = false;
+    kernel::W32(kMapSurface, surface);
+    kernel::W32(kMapColour, colour);
+    std::memcpy(&kernel::G<uint8_t>(kSunDirection), sun, 12);
+    if (!g_captured) return false;
+    Matrix view_m, a;
+    ReadMatrix(R32(kCamera) + kCameraView, view_m);
+    Multiply(world, view_m, a);
+    Multiply(a, g_captured_m, t.k);
+    t.car = car, t.view = view, t.made = g_frame, t.ready = true;
+    return true;
+}
+
+// the tile to use for this car and direction (the light's way, in the car's space): made now if the frame's budget allows, else
+// the nearest the car has
+Tile* FindTile(X86Context& ctx, uint32_t car, const float local[3]) {
+    static const uint32_t budget = std::getenv("PGR2_TILE_BUDGET") ? uint32_t(std::atoi(std::getenv("PGR2_TILE_BUDGET"))) : 4;
+    // a tile is drawn again after this many frames (the car's damage; a target lost); testing: PGR2_TILE_REFRESH
+    static const uint32_t refresh = std::getenv("PGR2_TILE_REFRESH") ? uint32_t(std::atoi(std::getenv("PGR2_TILE_REFRESH"))) : 60 * 20;
+    int view = NearestView(local);
+    static const int skew = std::getenv("PGR2_TILE_SKEW") ? std::atoi(std::getenv("PGR2_TILE_SKEW")) : 0;  // testing: a view this many azimuths off
+    if (skew && view < kViews - 1) view = view / kAzimuths * kAzimuths + (view % kAzimuths + skew + kAzimuths) % kAzimuths;
+    Tile* have = nullptr;
+    for (Tile& t : g_tiles)
+        if (t.ready && t.car == car && t.view == view) have = &t;
+    if (have && g_frame - have->made < refresh) return have;
+    if (g_made_this_frame < budget) {
+        Tile* slot = have;
+        if (!slot) {  // a free slot, else the least recently used
+            size_t best = 0;
+            for (size_t i = 0; i < g_tiles.size(); i++) {
+                if (!g_tiles[i].ready) {
+                    best = i;
+                    break;
+                }
+                if (g_tiles[i].used < g_tiles[best].used) best = i;
+            }
+            slot = &g_tiles[best];
+            if (!PrepareSlot(ctx, *slot, best)) return nullptr;
+        }
+        g_made_this_frame++;
+        slot->ready = false;
+        if (MakeTile(ctx, *slot, car, view)) return slot;
+        return nullptr;
+    }
+    if (have) return have;
+    // the nearest of the car's tiles, if near enough (about two views off)
+    Tile* near = nullptr;
+    float best = 0.9f;
+    for (Tile& t : g_tiles) {
+        if (!t.ready || t.car != car) continue;
+        float d[3];
+        ViewDirection(t.view, d);
+        const float dot = d[0] * local[0] + d[1] * local[1] + d[2] * local[2];
+        if (dot > best) best = dot, near = &t;
+    }
+    return near;
+}
+
+// the ground mesh with a tile: its matrix for this frame at c[0x8F], its texture in the map's place
+// The tile's silhouette is the car seen along its view; the light's own way differs by up to half a view's spacing. Each ground
+// point p (in the car's space) is moved to where the view's ray through the car's middle slice (height h) meets p's level, the
+// slice point being where the light's ray from p crosses it: p' = p + (h - p.y) (D / D.y - V / V.y). Exact for that slice, so
+// the shadow follows the lamp smoothly as the car moves, with the nearest view's outline.
+void ShearToward(const float light[3], int view, float h, Matrix out) {
+    float v[3];
+    ViewDirection(view, v);
+    const float ly = std::min(light[1], -0.1f), vy = std::min(v[1], -0.1f);
+    const float sx = light[0] / ly - v[0] / vy, sz = light[2] / ly - v[2] / vy;
+    for (int i = 0; i < 16; i++) out[i] = i % 5 == 0 ? 1.0f : 0.0f;
+    out[4] = -sx, out[6] = -sz;     // row y: x' -= y sx, z' -= y sz
+    out[12] = h * sx, out[14] = h * sz;
+}
+
+void DrawWithTile(X86Context& ctx, uint32_t car, Tile& t, const float light[3]) {
+    Matrix world, world_inv, view_m, view_inv, a, b, m, shear, sheared;
+    CarWorld(ctx, car, world);
+    ReadMatrix(R32(kCamera) + kCameraView, view_m);
+    if (!Invert(world, world_inv) || !Invert(view_m, view_inv)) return;
+    Multiply(view_inv, world_inv, a);
+    static const bool no_shear = std::getenv("PGR2_TILE_NO_SHEAR") != nullptr;  // testing
+    static const float slice = std::getenv("PGR2_TILE_SLICE") ? float(std::atof(std::getenv("PGR2_TILE_SLICE"))) : 0.5f;
+    if (!no_shear) {
+        const float roof = F(car + kCarRoof);
+        ShearToward(light, t.view, slice * (roof > 0.3f && roof < 4.0f ? roof : 1.3f), shear);
+        Multiply(shear, t.k, sheared);
+        Multiply(a, sheared, b);
+    } else {
+        Multiply(a, t.k, b);
+    }
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) m[r * 4 + c] = b[c * 4 + r];
+    // testing: PGR2_TILE_LOG, the matrix against the one the game made with the tile, when made this frame
+    static const bool log = std::getenv("PGR2_TILE_LOG") != nullptr;
+    static int said = 0;
+    if (log && t.made == g_frame && said < 12) {
+        said++;
+        float diff = 0;
+        for (int i = 0; i < 16; i++) diff = std::max(diff, std::fabs(b[i] - g_captured_m[i]));
+        LOGR("street light shadows: tile %d of car %08X, matrix off by %.5f; game's row 3 %.3f %.3f %.3f %.3f, ours %.3f %.3f %.3f %.3f", t.view, car,
+             diff, g_captured_m[12], g_captured_m[13], g_captured_m[14], g_captured_m[15], b[12], b[13], b[14], b[15]);
+    }
+    // the camera's own transforms again, as 0x1892E0 ends with (0x189ADC): the night pass's flattened shadows load their world
+    // the states 0x1892E0 leaves, which the ground mesh draws with (the night pass's own differ): culling 0x900 (set for the car's
+    // depth at 0x189A3D, never put back) and Z as W (0x189ABE); each through the game's copy of the state, as it sets them
+    if (kernel::R16(kCullModeCopy) != kCullMap) {
+        kernel::W16(kCullModeCopy, kCullMap);
+        kernel::CallGuest(ctx, kSetCullMode, {kCullMap});
+    }
+    if (kernel::G<uint8_t>(kZEnableCopy) != kZEnableW) {
+        kernel::G<uint8_t>(kZEnableCopy) = kZEnableW;
+        kernel::CallGuest(ctx, kSetZEnable, {kZEnableW});
+    }
+    ctx.ecx = R32(kCamera);
+    kernel::CallGuest(ctx, kCameraSetup, {});
+    std::memcpy(&kernel::G<uint8_t>(g_upload), m, sizeof(Matrix));
+    ctx.ecx = kTextureMatrixRegister;
+    ctx.edx = g_upload;
+    kernel::CallGuest(ctx, kSetVSConstant, {16});
+    const uint32_t texture = R32(kMapTexture);
+    kernel::W32(kMapTexture, t.texture);
+    // stage 0 filtered (the renderer then compares 2x2 texels and blends them: a softer edge than the tile's texels); the stage's
+    // filters as they were afterwards, so the game's own copy of them stays true. 0x21920 sets only its addressing (0x20580)
+    static const bool pcf = !std::getenv("PGR2_TILE_POINT");  // testing
+    const uint32_t mag = R32(kStage0 + kTssMag * 4), min = R32(kStage0 + kTssMin * 4);
+    if (pcf) {
+        kernel::W32(kStage0 + kTssMag * 4, kTexfLinear);
+        kernel::W32(kStage0 + kTssMin * 4, kTexfLinear);
+        kernel::W32(kDirtyFlags, R32(kDirtyFlags) | kDirtyStage0);
+    }
+    ctx.ecx = car;
+    kernel::CallGuest(ctx, kGroundMesh, {});
+    if (pcf) {
+        kernel::W32(kStage0 + kTssMag * 4, mag);
+        kernel::W32(kStage0 + kTssMin * 4, min);
+        kernel::W32(kDirtyFlags, R32(kDirtyFlags) | kDirtyStage0);
+    }
+    kernel::W32(kMapTexture, texture);
+    t.used = g_frame;
+}
+
 }  // namespace
 
 // the night car shadows (thiscall on the car list)
@@ -145,6 +458,8 @@ X86_FUNC(sub_00032D10) {
     g_pass = true;
     g_have = false;
     last_car = 0;
+    g_frame++;
+    g_made_this_frame = 0;
     // reach: each light's radius (and the inner one where it is at full strength) widened for this pass only, so lights a little
     // farther off still cast, and stronger: 0x32D10 keeps a light within its radius (+0x28) of the car, at a strength (0x409E0)
     // falling from the inner radius (+0x2C) to the outer
@@ -255,10 +570,51 @@ X86_FUNC(sub_000C7C00) {
         const bool cpu = pgr2::cpu_car_shadows;
         pgr2::cpu_car_shadows = false;  // the mesh of this car alone (car_shadows.cpp would add the others')
         g_inner = true;
-        ctx.ecx = kShadowObject;
-        kernel::CallGuest(ctx, kDrawMap, {car, 0x3F800000u});
-        ctx.ecx = car;
-        kernel::CallGuest(ctx, kGroundMesh, {});
+        // PGR2_MESH_FIT=1: the ground mesh only as far as this shadow reaches: from the car's middle, half its length and the car's
+        // height x the lamp's distance across the road / (the lamp's height over the car's roof)
+        static const bool fit = std::getenv("PGR2_MESH_FIT") != nullptr;
+        g_fit_radius = 0;
+        if (fit) {
+            const float across = std::sqrt((g_lamp[0] - F(car + 0x44)) * (g_lamp[0] - F(car + 0x44)) + (g_lamp[2] - F(car + 0x4C)) * (g_lamp[2] - F(car + 0x4C)));
+            const float roof = F(car + 0xB0), over = std::max(g_lamp[1] - F(car + 0x48) - roof, 0.5f);
+            g_fit_radius = std::clamp(F(car + 0xAC) * 0.5f + roof * across / over + 0.5f, 2.5f, 12.0f);
+        }
+        const uint64_t t0 = perf::Ticks();
+        if (mode >= 4 && EnsureTiles(ctx)) {
+            // the cached map nearest the light's way in the car's space (its world's rows are the car's axes)
+            Matrix world;
+            CarWorld(ctx, car, world);
+            float local[3];
+            for (int i = 0; i < 3; i++) {
+                const float* row = world + i * 4;
+                const float n2 = row[0] * row[0] + row[1] * row[1] + row[2] * row[2];
+                local[i] = n2 > 0 ? (row[0] * dir[0] + row[1] * dir[1] + row[2] * dir[2]) / n2 : 0;
+            }
+            static const bool tile_log = std::getenv("PGR2_TILE_LOG") != nullptr;
+            static int said_local = 0;
+            if (tile_log && said_local < 10) {
+                said_local++;
+                LOGR("street light shadows: car %08X rows x %.2f %.2f %.2f y %.2f %.2f %.2f z %.2f %.2f %.2f at %.2f %.2f %.2f (position %.2f %.2f %.2f), "
+                     "light %.2f %.2f %.2f, in the car's space %.2f %.2f %.2f, roof %.2f", car, world[0], world[1], world[2], world[4], world[5],
+                     world[6], world[8], world[9], world[10], world[12], world[13], world[14], F(car + 0x44), F(car + 0x48), F(car + 0x4C), dir[0],
+                     dir[1], dir[2], local[0], local[1], local[2], F(car + kCarRoof));
+            }
+            const uint32_t made_before = g_made_this_frame;
+            Tile* tile = FindTile(ctx, car, local);
+            (tile ? (g_made_this_frame != made_before ? g_tiles_made : g_tiles_reused) : g_tiles_missing)++;
+            const uint64_t t1 = perf::Ticks();
+            if (tile) DrawWithTile(ctx, car, *tile, local);
+            g_map_ticks += t1 - t0, g_mesh_ticks += perf::Ticks() - t1;
+        } else {
+            ctx.ecx = kShadowObject;
+            g_in_map = true;
+            kernel::CallGuest(ctx, kDrawMap, {car, 0x3F800000u});
+            g_in_map = false;
+            const uint64_t t1 = perf::Ticks();
+            ctx.ecx = car;
+            kernel::CallGuest(ctx, kGroundMesh, {});
+            g_map_ticks += t1 - t0, g_mesh_ticks += perf::Ticks() - t1;
+        }
         g_inner = false;
         pgr2::cpu_car_shadows = cpu;
         std::memcpy(&kernel::G<uint8_t>(kSunDirection), sun, 12);
@@ -276,8 +632,13 @@ X86_FUNC(sub_000C7C00) {
                  dir[1], dir[2], shade, colour, F(car + kCarAmbient), F(car + kCarAmbient + 4), F(car + kCarAmbient + 8));
         }
         if (log && std::chrono::steady_clock::now() - since > std::chrono::seconds(2)) {
-            LOGR("street light shadows: %u maps and meshes drawn in 2 s", pairs);
+            const double tick_ms = 1000.0 / 24e6;  // the ARM counter (perf::Ticks)
+            LOGR("street light shadows: %u maps and meshes drawn in 2 s; per shadow, map %.3f ms, mesh %.3f ms (game thread)", pairs,
+                 pairs ? g_map_ticks * tick_ms / pairs : 0.0, pairs ? g_mesh_ticks * tick_ms / pairs : 0.0);
+            if (mode >= 4) LOGR("street light shadows: tiles made %u, reused %u, missing %u", g_tiles_made, g_tiles_reused, g_tiles_missing);
+            g_tiles_made = g_tiles_reused = g_tiles_missing = 0;
             pairs = 0;
+            g_map_ticks = g_mesh_ticks = 0;
             since = std::chrono::steady_clock::now();
         }
         ctx.esp += 8;  // ret 4
@@ -353,8 +714,26 @@ X86_FUNC(sub_000C7C00) {
 // grows with the reach, as shadows from farther lamps are longer than the day's 4 m
 X86_FUNC(sub_000BF3F0) {
     if (g_inner) {
-        const float radius = std::min(F(ctx.esp + 12) * float(std::clamp<uint32_t>(pgr2::street_light_reach, 100, 300)) / 100.0f, 12.0f);
+        const float radius = g_fit_radius > 0 ? g_fit_radius
+                                              : std::min(F(ctx.esp + 12) * float(std::clamp<uint32_t>(pgr2::street_light_reach, 100, 300)) / 100.0f, 12.0f);
         WF(ctx.esp + 12, radius);
     }
     __imp__sub_000BF3F0(ctx, base);
+}
+
+// the car's model drawn (thiscall: level of detail, pass, ?; the depth pass is (0, 2, 2)): testing, PGR2_MAP_LOD=n draws a street
+// light's map at level n (the same draws, fewer triangles: detail.cpp)
+X86_FUNC(sub_00022470) {
+    static const int lod = std::getenv("PGR2_MAP_LOD") ? std::atoi(std::getenv("PGR2_MAP_LOD")) : -1;
+    if (g_in_map && lod >= 0) kernel::W32(ctx.esp + 4, uint32_t(lod));
+    __imp__sub_00022470(ctx, base);
+}
+
+// D3DXMatrixTranspose (out, in; stdcall): in a cached map's draw (mode 4) the texture matrix 0x1892E0 is about to upload is kept
+X86_FUNC(sub_0019440D) {
+    if (g_capture && R32(ctx.esp) == kFromTranspose) {
+        ReadMatrix(R32(ctx.esp + 8), g_captured_m);
+        g_captured = true;
+    }
+    __imp__sub_0019440D(ctx, base);
 }
