@@ -772,6 +772,20 @@ X86_FUNC(sub_0017FCC0) {
     __imp__sub_0017FCC0(ctx, base);
 }
 
+// a view's car lights (0x42CE0: from the race view 0x17FCC0, the reflection cubes 0x180040, the light pool 0x180230 and
+// 0x82BE7): the coronas (0x31570 -> 0x415B0) are screen space quads drawn without the depth test, so they were taken
+// for 2D and squeezed toward the centre with the HUD (the attract demo's 4:3, a frame wider than the HUD's shape),
+// landing beside their lamps, over the car's body. Nothing in the pass is 2D: hud_aspect wide enough that none is
+// squeezed, the caller's restored after
+X86_EXTERN_FUNC(__imp__sub_00042CE0);
+X86_FUNC(sub_00042CE0) {
+    float& hud = d3d::State().hud_aspect;
+    const float was = hud;
+    hud = 100.0f;
+    __imp__sub_00042CE0(ctx, base);
+    hud = was;
+}
+
 // the system link session's teardown (0x165AF0, ecx the session): XNET_TRACE=1 logs who ends it, with the guest stack
 X86_EXTERN_FUNC(__imp__sub_00165AF0);
 X86_FUNC(sub_00165AF0) {

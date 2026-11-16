@@ -37,6 +37,18 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-15 - night: car headlight coronas back (Metal)
+- Coronas were missing or reduced to a dot beside the lamp, with stray dots over car bodies. Three faults:
+  the visibility ring (512 KB) passed Metal's 256 KB visibility offset limit, so every query in its upper half read 0
+  (all 147,000 such reports in the demos); counts were reported in pixels while the game divides by its multisample
+  count (2), halving every corona; and the corona quads (screen space, no depth test) were squeezed toward the centre
+  as HUD, off their lamps and over the car's body.
+- Fixed: SDK ring 1 << 15 and State::count_samples (all three renderers); hooks.cpp wraps the light pass 0x42CE0 with
+  hud_aspect 100 so it is never squeezed.
+- Evidence: the five night demos (PGR2_NIGHT=1): full coronas with streaks on the 350Z and MINI, on their lamps; the
+  GTO's dots over its boot gone; the attract 2D still squeezed. Research notes: .local/research/night-races.md.
+- Next: smoke run, an in-race night check (mirror too), D3D11/D3D12 build on Windows.
+
 ### 2026-11-10 - smoke: a tread temperature for each wheel decides how much smoke
 - From the literature (FINDINGS: sliding drives what comes off a tyre, rubber smokes from about 200 to 400 C): the timed
   burnout build-up is replaced by a tread temperature per wheel, heating with its slip and cooling with the air and the
