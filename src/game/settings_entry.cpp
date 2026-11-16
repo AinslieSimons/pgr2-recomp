@@ -40,7 +40,8 @@ extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflect
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao;
-extern bool menus_4x3, cpu_car_shadows, water_area_cull;
+extern bool menus_4x3, cpu_car_shadows, water_area_cull, smoke_physics, smoke_lighting;
+extern uint32_t smoke_duration, smoke_density;
 void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
 
 namespace {
@@ -92,7 +93,7 @@ Choices OnOff() { return {u"Off", u"On"}; }
 const std::vector<uint32_t> kRender = {25, 50, 75, 100, 125, 150, 175, 200}, kAniso = {0, 2, 4, 8, 16},
                             kDraw = {50, 75, 100, 150, 200, 300, 400}, kFov = {75, 90, 100, 110, 125, 150},
                             kSharpen = {0, 25, 50, 75, 100}, kRaceFps = {30, 60, 90, 120, 144},
-                            kCaps = {30, 60, 120, 144, 240, 0},
+                            kCaps = {30, 60, 120, 144, 240, 0}, kSmoke = {50, 75, 100, 150, 200, 300}, kSmokeDensity = {100, 200, 300, 400},
                             kWheelRange = {180, 270, 360, 540, 720, 900, 1080, 2880},
                             kWheelLock = {180, 270, 360, 450, 540, 720, 900, 1080},
                             kDead = {0, 1, 2, 3, 5, 10, 20}, kPercent = {0, 25, 50, 70, 85, 100};
@@ -185,6 +186,20 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(tree_detail); },
      [](uint32_t i) { tree_detail = i != 0; }},
+    {u"Tyre Smoke", u"How long tyre smoke and dust last. More particles from the next race.",
+     [] { return Choices{u"0.5x", u"0.75x", u"Console", u"1.5x", u"2x", u"3x"}; },
+     [] { return Nearest(kSmoke, smoke_duration); },
+     [](uint32_t i) { smoke_duration = kSmoke[i]; }},
+    {u"Smoke Particles", u"More, smaller puffs make up the smoke, so cars can pull it apart. From the next race.",
+     [] { return Choices{u"Console", u"2x", u"3x", u"4x"}; },
+     [] { return Nearest(kSmokeDensity, smoke_density); },
+     [](uint32_t i) { smoke_density = kSmokeDensity[i]; }},
+    {u"Smoke Physics", u"Cars driving through tyre smoke drag it along and swirl it.", OnOff,
+     [] { return uint32_t(smoke_physics); },
+     [](uint32_t i) { smoke_physics = i != 0; }},
+    {u"Smoke Lighting", u"Smoke made in a building's shade is darker than in the sun.", OnOff,
+     [] { return uint32_t(smoke_lighting); },
+     [](uint32_t i) { smoke_lighting = i != 0; }},
     {u"Car Shadows", u"A sun shadow under every car, not only yours as on the console.",
      [] { return Choices{u"Console", u"Every Car"}; },
      [] { return uint32_t(cpu_car_shadows); },

@@ -149,6 +149,7 @@ void ApplyDetail();                    // src/game/detail.cpp
 void MirrorFarBefore(uint32_t camera);
 void MirrorRangeAfter(uint32_t camera);
 void ApplySettingsEntry();  // src/game/settings_entry.cpp
+void SmokeFrame();          // src/game/smoke.cpp
 }
 
 // the intro movies are 640x480 4:3 pictures the XMV player draws as one screen quad from a YUY2 texture: on a wider
@@ -499,6 +500,7 @@ X86_FUNC(sub_000D90F0) {
     pgr2::ApplySettingsEntry();
     ApplyDrawDistance();
     pgr2::ApplyDetail();
+    pgr2::SmokeFrame();
     // once a race's results are done (0x383984, cleared by the next race's setup) visibility reports are waited for: the
     // post-race screens came out garbled with them a frame late
     gpu::g_reports_wait.store(kernel::G<uint8_t>(0x383984) != 0, std::memory_order_relaxed);

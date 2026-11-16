@@ -11,14 +11,14 @@
 void InstallDrawFilter();  // src/game/draw_filter.cpp
 
 namespace pgr2 {
-extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3;
+extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3, smoke_physics, smoke_lighting;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
 extern bool water_area_cull;
-extern uint32_t baked_ao;
+extern uint32_t baked_ao, smoke_duration, smoke_density;
 void InstallBakedAo();  // src/game/baked_ao.cpp
 const std::vector<app::MenuSection>* Menu();  // src/game/settings_entry.cpp
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
@@ -75,6 +75,9 @@ void Init() {
     if (const char* e = std::getenv("PGR2_TRACED_RANGE"); e) pgr2::traced_range = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_BAKED_AO"); e) pgr2::baked_ao = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_SMOKE"); e) pgr2::smoke_duration = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_SMOKE_DENSITY"); e) pgr2::smoke_density = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_SMOKE_PHYSICS"); e) pgr2::smoke_physics = *e == '1';
     InstallDrawFilter();  // after the options: the DLC setting picks its part
     pgr2::InstallBakedAo();
     pgr2::RaiseFrameCap();
@@ -105,6 +108,10 @@ uint32_t reflection_range = 0;    // its object range: 0 the console's (a tenth)
 bool reflection_every_frame = true;   // every cube face every frame above 30, not each at 30 a second (src/game/hooks.cpp)
 bool car_cubes = true;            // a reflection cube of its own for every other car
 uint32_t baked_ao = 60;           // the city's baked ambient occlusion, percent as baked, 0 off; Metal (src/game/baked_ao.cpp)
+uint32_t smoke_duration = 100;    // tyre smoke and dust, percent of the console's time (100: about 2.6 s); its tail timed at any frame rate (src/game/smoke.cpp)
+uint32_t smoke_density = 300;     // tyre smoke particles a wheel, percent of the console's 50, each smaller (src/game/smoke.cpp)
+bool smoke_physics = true;         // smoke stirred by the cars driving through it (src/game/smoke.cpp)
+bool smoke_lighting = true;        // smoke darker where it is made in shade (src/game/smoke.cpp)
 uint32_t car_cube_every = 1;      // each car's cube is redrawn one frame in this many (1: every frame)
 uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
 uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
@@ -169,6 +176,14 @@ const app::GameInfo app::kGame = {
                  "1 (every frame) by default, up to 8: a higher number costs less frame rate, the cars' reflections update less often; at once."},
                 {"baked_ao", nullptr, &pgr2::baked_ao, "Baked ambient occlusion (%)",
                  "60 by default, 0 off: the city's ambient occlusion, ray traced in the background as streets are first seen and kept in metalcache/ao; macOS (Metal) only; at once."},
+                {"smoke_duration", nullptr, &pgr2::smoke_duration, "Tyre smoke duration (%)",
+                 "100 by default (the console's, about 2.6 s): how long tyre smoke and dust last, 50 to 300; its fade the same at any frame rate; more particles from the next race."},
+                {"smoke_density", nullptr, &pgr2::smoke_density, "Tyre smoke particles (%)",
+                 "300 by default (100 the console's 50 a wheel): more, smaller puffs of the same smoke, 100 to 400; from the next race."},
+                {"smoke_physics", &pgr2::smoke_physics, nullptr, "Smoke stirred by cars",
+                 "On by default: cars driving through tyre smoke drag it along, push it aside and swirl it; at once."},
+                {"smoke_lighting", &pgr2::smoke_lighting, nullptr, "Smoke lit by the sun",
+                 "On by default: tyre smoke made in a building's shade is darker than smoke made in the sun, as the cars are lit; at once."},
                 {"traced_range", nullptr, &pgr2::traced_range, "Ray traced cars range (m)",
                  "400 by default: cars this close to the camera are in the ray traced scene; at once."},
                 {"traced_ray", nullptr, &pgr2::traced_ray, "Ray traced reflection length (m)",
@@ -200,7 +215,7 @@ const app::GameInfo app::kGame = {
     .sharpen_2d = true,
     .languages = {1, 2, 3, 4, 5, 6, 7, 8},  // the disc's; Portuguese has text files but the game runs it as English              // menus, HUD and text drawn from enlarged, sharpened copies of their textures
     .auto_fills_screen = true,  // "From Screen" on an ultrawide: the 3D views widened to it, the HUD 16:9 (hooks.cpp ApplyAspect)
-    .fill_follows_live = true,  // its views are reshaped when that changes in play (hooks.cpp Reshape)
     .fills_narrow_screens = true,  // a 16:10 screen: the 4:3 mode, its 3D views widened (src/game/hooks.cpp ApplyAspect)
     .menu = pgr2::Menu,  // the Recomp page's sections, shown by the settings window too (src/game/settings_entry.cpp)
+    .fill_follows_live = true,  // its views are reshaped when that changes in play (hooks.cpp Reshape)
 };
