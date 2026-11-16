@@ -353,6 +353,9 @@ void Track(uint32_t cam, bool box, int32_t x, int32_t w) {
 }
 
 bool Same(uint32_t cam, float own) {
+    // a view kept from a page since left (a garage or showroom camera) may have been freed: reading it faulted (SIGBUS)
+    // when the frame's shape changed on the way from the 4:3 menus into a race
+    if (!mem::IsCommitted(cam) || !mem::IsCommitted(cam + 0x38)) return false;
     float now;
     std::memcpy(&now, &kernel::G<uint32_t>(cam + 0x38), 4);
     return now == own;
