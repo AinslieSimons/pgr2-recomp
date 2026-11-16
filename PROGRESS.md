@@ -37,6 +37,22 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-16 - street light shadows from shadow maps, more lights (branch headlight-shadows)
+
+- `street_light_shadows` 3, now the default: for each light the night car pass 0x32D10 keeps, the day's machinery is pointed at
+  the lamp: the sun's direction (0x49EE8C) and colour (0x49EEA8) set to the lamp's, the car's depth map drawn (0x1892E0), its
+  ground mesh drawn with it (0x21920), the sun put back. The car's true shape instead of the flattened hull's angular layers,
+  and it reaches under the car. Shade per light: the mesh's base / (base + colour x -dir.y) solved for the light's shade to the
+  power 4 (the console's hull overlaps itself; the mesh multiplies once).
+- Several lights at once: draw_filter.cpp's one-shadow stencil (for the day's per-car shadows) is off at night, so each light's
+  shadow compounds.
+- `street_light_reach` (percent, default 200): each street light's radius scaled during the pass (records [0x2D97FC], count
+  [0x2D9800], +0x28 and +0x2C; 0x409E0 cuts a light off at its radius), and the ground mesh's 4 m radius with it (12 m at most).
+  On the recorded race: 21,300 shadows at 100, 64,000 at 200, 108,600 at 300.
+- The user played it: "looks great"; multiple moving shadows from the lights. Cost: one depth map and mesh per car per light,
+  300 to 800 a second: a clear frame rate dip (not measured). Ideas: the nearest N lights per car, a smaller map, every other frame.
+- Not checked: Windows, other cities' light layouts, the perf recorder's numbers.
+
 ### 2026-11-16 - street light shadows: soft, and cast from the lamp (branch headlight-shadows)
 
 - The game's own street light shadows are the night car pass 0x32D10: per car in view, the road plane under it, the lights within

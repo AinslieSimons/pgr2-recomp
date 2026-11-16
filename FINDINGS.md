@@ -165,6 +165,15 @@ Each item is marked:
 
 Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11-05) unless marked as read from the code or data.
 
+- **[PGR2] Street light car shadows** (2026-11-16). At night only (0x17FE7E) the race view runs 0x32D10: for each car in view
+  the road plane under it (three points of the car, a cross product), the lights within 50 m from the grid 0x2D9808 (records
+  0x54 bytes in [0x2D97FC], count [0x2D9800]; type +0x50 & 0x1F 2 or 3, place +0x38, radius +0x28, inner +0x2C, colour +0x24;
+  strength 0x409E0, 0 past the radius), and per light the car's shadow hull (0xC7C00, triangle fans) flattened by the XDK's
+  D3DXMatrixShadow (0x194C8C; d = P.L, M = d I - P L^T, the opposite sign to the D3DX docs) toward the light as a direction,
+  divided by d (0x30AE0), drawn as a multiply (ZERO, SRC_COLOR) of base / (base + strength^2 colour). The draw is W-buffered:
+  its w is its depth, so a shadow matrix scaled differently lands behind the road or the camera. The sun shadow's direction is
+  0x49EE8C (the way the light travels, y < 0; -y scales its colour 0x49EEA8); its map 0x1892E0 and ground mesh 0x21920 (the
+  road's collision triangles within 4 m, 0xBF3F0 on 0x381910) work at night too. `src/game/night_shadows.cpp`.
 - **[PGR2] The light pool at night** (2026-11-16). 0x180230 (camera kind 3) draws, into target `0x48639C` (LIN_A8R8G8B8
   256x256, depth LIN_D16 from 0x178780: no stencil): the world, the cars and the light pass 0x42CE0 with colour writes RGB,
   then the followed car's headlight beam with alpha only (0x32850 -> 0x1F2A0 -> 0x1D4A0: one triangle strip in car space,

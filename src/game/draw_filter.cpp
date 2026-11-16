@@ -113,6 +113,8 @@ public:
             for (int i = 0; i < kSimple; i++) state.simple[kMethods[i] >> 2] = saved_[i];
             set_ = false;
         }
+        // at night (0x49EF6C) these draws are the street lights' shadows (src/game/night_shadows.cpp, one per light): they compound
+        if (kernel::R32(0x49EF6C) == 1) return;
         if (!pgr2::cpu_car_shadows || !s.simple[gpu::kMBlendEnable >> 2] || s.simple[gpu::kMSrcBlend >> 2] != 0 ||
             s.simple[gpu::kMDestBlend >> 2] != 0x300 || !s.textures[0])
             return;

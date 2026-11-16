@@ -18,7 +18,7 @@ extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
 extern bool water_area_cull;
-extern uint32_t baked_ao, smoke_duration, smoke_density, street_light_shadows;
+extern uint32_t baked_ao, smoke_duration, smoke_density, street_light_shadows, street_light_reach;
 void InstallBakedAo();  // src/game/baked_ao.cpp
 const std::vector<app::MenuSection>* Menu();  // src/game/settings_entry.cpp
 std::vector<achievements::Def> AchievementSet();    // src/game/achievement_set.cpp
@@ -76,6 +76,7 @@ void Init() {
     if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_BAKED_AO"); e) pgr2::baked_ao = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_STREET_SHADOWS"); e) pgr2::street_light_shadows = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_STREET_REACH"); e) pgr2::street_light_reach = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_SMOKE"); e) pgr2::smoke_duration = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_SMOKE_DENSITY"); e) pgr2::smoke_density = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_SMOKE_PHYSICS"); e) pgr2::smoke_physics = *e == '1';
@@ -89,7 +90,8 @@ namespace pgr2 {
 uint32_t race_fps = 30;  // the frame rate of races, 30 as on the console (src/game/hooks.cpp)
 bool cpu_car_shadows = true;  // every car with the followed car's sun shadow (src/game/car_shadows.cpp)
 bool headlight_shadows = true;  // cars shadow the headlight beams on the road at night (src/game/headlight_shadows.cpp)
-uint32_t street_light_shadows = 2;  // the street lights' car shadows: 0 as the console, 1 soft, 2 soft and from the lamp (src/game/night_shadows.cpp)
+uint32_t street_light_reach = 200;  // street lights' shadow reach, percent of each light's radius (src/game/night_shadows.cpp)
+uint32_t street_light_shadows = 3;  // the street lights' car shadows: 0 as the console, 1 soft, 2 soft and from the lamp, 3 shadow maps (src/game/night_shadows.cpp)
 bool menus_4x3 = true;   // the menus at 4:3 with bars each side on a widescreen frame (src/game/hooks.cpp)
 bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
@@ -179,8 +181,10 @@ const app::GameInfo app::kGame = {
                  "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
                 {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
                  "1 (every frame) by default, up to 8: a higher number costs less frame rate, the cars' reflections update less often; at once."},
-                {"street_light_shadows", nullptr, &pgr2::street_light_shadows, "Street light shadows (0-2)",
-                 "At night: 0 as the console (hard edged), 1 soft edged, 2 soft and cast from the lamp; at once."},
+                {"street_light_shadows", nullptr, &pgr2::street_light_shadows, "Street light shadows (0-3)",
+                 "At night: 0 as the console (hard edged), 1 soft edged, 2 soft and cast from the lamp, 3 (default) the day's shadow map from each lamp: the car's true shape; costs frame rate; at once."},
+                {"street_light_reach", nullptr, &pgr2::street_light_reach, "Street light shadow reach (%)",
+                 "200 by default (100 the console's): each street light's radius for its car shadows, 50 to 400; more lights cast, and farther; at once."},
                 {"baked_ao", nullptr, &pgr2::baked_ao, "Baked ambient occlusion (%)",
                  "60 by default, 0 off: the city's ambient occlusion, ray traced in the background as streets are first seen and kept in metalcache/ao; macOS (Metal) only; at once."},
                 {"smoke_duration", nullptr, &pgr2::smoke_duration, "Tyre smoke duration (%)",
