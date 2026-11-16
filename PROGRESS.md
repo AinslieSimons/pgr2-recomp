@@ -37,6 +37,21 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-16 - street light shadows: soft, and cast from the lamp (branch headlight-shadows)
+
+- The game's own street light shadows are the night car pass 0x32D10: per car in view, the road plane under it, the lights within
+  50 m (grid 0x2D9808), and per light the car's shadow mesh (0xC7C00) flattened by D3DXMatrixShadow (0x194C8C) toward the light
+  as a direction (w 0), a multiply of one shade: hard edged. Found from a recording of a night race in the user's profile
+  (`.local/shadowfix/rec`): skipping 0x32D10 removes the shape; the blob, light pool and sun mesh do not.
+- `src/game/night_shadows.cpp`, setting `street_light_shadows` (F1; Recomp > Detail > Street Light Shadows; default 2):
+  1 soft, each shadow drawn 9 times from points on a 0.6 m disc over the lamp, each pass's vertex colours to the power 1/9
+  (caught in SetVertexDataColor, headlight_shadows.cpp); 2 also from the lamp as a point (w 1). Each matrix is built the XDK's
+  way (sign opposite to the D3DX documentation) and scaled to the game's final w (0x30AE0 divides the game's by d): the draw is
+  W-buffered, so a different w put the shadow behind the road or behind the camera. With one sample and no radius it equals the
+  game's matrix (largest difference 0.0000).
+- Evidence: replays of the recording, same frame (read 41 x 120): mode 2 keeps the shape with a graded edge where the console's
+  is a hard line; no traps. Not checked: Windows, other cities, frame time with many lights.
+
 ### 2026-11-16 - headlight shadows in the light pool; pool debug view (branch headlight-shadows)
 
 - `src/game/headlight_shadows.cpp`, setting `headlight_shadows` (F1, on): at night, cars inside the followed car's headlight

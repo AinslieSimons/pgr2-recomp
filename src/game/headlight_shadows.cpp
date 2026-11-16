@@ -21,6 +21,8 @@
 
 namespace pgr2 {
 extern bool headlight_shadows;  // src/common/game_info.cpp
+extern float g_shade_power;     // src/game/night_shadows.cpp
+uint32_t ShadePower(uint32_t colour);
 }
 
 X86_EXTERN_FUNC(__imp__sub_0001F2A0);
@@ -343,6 +345,8 @@ X86_FUNC(sub_001C0CF0) {
         ctx.esp += 4 + 8;
         return;
     }
+    // the soft street light shadows' passes (src/game/night_shadows.cpp): each vertex colour raised to a power
+    if (pgr2::g_shade_power > 0 && R32(ctx.esp + 4) == kDiffuse) kernel::W32(ctx.esp + 8, pgr2::ShadePower(R32(ctx.esp + 8)));
     __imp__sub_001C0CF0(ctx, base);
 }
 

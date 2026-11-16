@@ -39,7 +39,7 @@ extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
-extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao;
+extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao, street_light_shadows;
 extern bool menus_4x3, cpu_car_shadows, headlight_shadows, water_area_cull, smoke_physics, smoke_lighting;
 extern uint32_t smoke_duration, smoke_density;
 void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
@@ -204,6 +204,10 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Every Car"}; },
      [] { return uint32_t(cpu_car_shadows); },
      [](uint32_t i) { cpu_car_shadows = i != 0; }},
+    {u"Street Light Shadows", u"At night: Soft edges, From Lamp also lengthens them away from the lamp.",
+     [] { return Choices{u"Console", u"Soft", u"From Lamp"}; },
+     [] { return std::min<uint32_t>(street_light_shadows, 2); },
+     [](uint32_t i) { street_light_shadows = i; }},
     {u"Headlight Shadows", u"At night a car in your headlights casts a shadow in their beam on the road.", OnOff,
      [] { return uint32_t(headlight_shadows); },
      [](uint32_t i) { headlight_shadows = i != 0; }},
