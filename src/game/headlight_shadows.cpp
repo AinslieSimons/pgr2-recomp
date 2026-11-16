@@ -7,9 +7,12 @@
 // A shadow is the occluder's footprint pushed away from a lamp to past the beam's end. Two lamps, at the front corners, each draw
 // the beam at half strength with their own shadows cut out: the half shadow between them is the soft edge.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "core/log.h"
@@ -21,6 +24,8 @@ extern bool headlight_shadows;  // src/common/game_info.cpp
 }
 
 X86_EXTERN_FUNC(__imp__sub_0001F2A0);
+X86_EXTERN_FUNC(__imp__sub_0001F1D0);
+X86_EXTERN_FUNC(__imp__sub_0001C850);
 X86_EXTERN_FUNC(__imp__sub_001C0C50);
 X86_EXTERN_FUNC(__imp__sub_001C0C10);
 X86_EXTERN_FUNC(__imp__sub_001C0CF0);
@@ -192,19 +197,26 @@ void Emit(X86Context& ctx, const std::vector<Poly>& pieces, float strength) {
             }
     kernel::CallGuest(ctx, kEnd, {});
 }
-}  // namespace
 
-// a car's beam into the light pool (thiscall on the car, its only caller 0x32850)
-X86_FUNC(sub_0001F2A0) {
+// a lamp of a car is on as 0x1C850 says: present (+0x5D), not broken (+0x5C) and brighter than [0x275C08]
+bool LampOn(uint32_t car, int i) {
+    const uint32_t l = car + 0xB68 + i * 0x60;
+    return kernel::G<uint8_t>(l + 0x5D) && !kernel::G<uint8_t>(l + 0x5C) && F(l + 0x58) > F(0x275C08);
+}
+
+using Guest = void (*)(X86Context&, uint8_t*);
+
+// a car's beam into the light pool, made by `beam` (thiscall on the car): caught, cut and drawn again
+void ClipBeam(X86Context& ctx, uint8_t* base, Guest beam_fn) {
     const uint32_t car = ctx.ecx;
     if (!pgr2::headlight_shadows || !car) {
-        __imp__sub_0001F2A0(ctx, base);
+        beam_fn(ctx, base);
         return;
     }
     // the strip as the game makes it, kept here: its Begin and End still reach the device, with nothing between them
     g_strip.clear();
     g_catch = true;
-    __imp__sub_0001F2A0(ctx, base);
+    beam_fn(ctx, base);
     g_catch = false;
     if (g_strip.size() < 3) return;
 
@@ -216,12 +228,25 @@ X86_FUNC(sub_0001F2A0) {
         beam.push_back(i & 1 ? Poly{b, a, c} : Poly{a, b, c});  // the strip's winding kept
     }
     const auto occluders = Occluders(car, near, far, wide);
+    {
+        static const bool log_beams = std::getenv("PGR2_HL_LOG") != nullptr;
+        static uint32_t beams = 0, with = 0;
+        static auto since = std::chrono::steady_clock::now() - std::chrono::seconds(20);
+        beams++, with += !occluders.empty();
+        if (log_beams && std::chrono::steady_clock::now() - since > std::chrono::seconds(10)) {
+            LOGR("headlight shadows: %u beams drawn, %u with cars in them (car %08X, its %u cars)", beams, with, car,
+                 R32(kCarList + kCarCount));
+            since = std::chrono::steady_clock::now();
+            beams = with = 0;
+        }
+    }
     // testing: PGR2_HL_LOG=1 logs the cars in the beam as they change, and now and then the area cut;
     // PGR2_HL_SHOW=1 draws the beam whole and its shadows brighter on top, to see where they fall
     static size_t last = 0;
     static const bool log = std::getenv("PGR2_HL_LOG") != nullptr;
-    if (log && occluders.size() != last) LOGR("headlight shadows: %zu cars in the beam of %08X", occluders.size(), car);
-    last = occluders.size();
+    if (log && car == kCarList + kCars && occluders.size() != last)  // the first car's only, to keep the log short
+        LOGR("headlight shadows: %zu cars in the beam of %08X", occluders.size(), car);
+    if (car == kCarList + kCars) last = occluders.size();
     if (occluders.empty()) {
         Emit(ctx, beam, 1.0f);
         return;
@@ -259,6 +284,34 @@ X86_FUNC(sub_0001F2A0) {
     }
 }
 
+bool g_beam_pass = false;  // inside 0x32850
+}  // namespace
+
+// the followed car's beam (0x32850 calls it when the car's lamp 7 or 8 is on: the beam lamps some car models have). A car whose
+// model has none gets the beam other cars get from their headlights (0x1F1D0, lamps 0 and 1) instead, so every car lights the
+// road ahead of it, as only some did on the console
+X86_FUNC(sub_0001F2A0) {
+    const uint32_t car = ctx.ecx;
+    const bool own = !pgr2::headlight_shadows || LampOn(car, 7) || LampOn(car, 8);
+    ClipBeam(ctx, base, own ? __imp__sub_0001F2A0 : __imp__sub_0001F1D0);
+}
+
+// another car's beam (lamps 0 and 1, 25 m)
+X86_FUNC(sub_0001F1D0) {
+    ClipBeam(ctx, base, __imp__sub_0001F1D0);
+}
+
+// a car's lamp is on (thiscall: index; ret 4): in the beam pass, a car with its headlights on and no beam lamps answers for lamp 7
+X86_FUNC(sub_0001C850) {
+    const uint32_t car = ctx.ecx, i = R32(ctx.esp + 4);
+    if (g_beam_pass && pgr2::headlight_shadows && i == 7 && !LampOn(car, 7) && !LampOn(car, 8) && (LampOn(car, 0) || LampOn(car, 1))) {
+        ctx.eax = 1;
+        ctx.esp += 8;
+        return;
+    }
+    __imp__sub_0001C850(ctx, base);
+}
+
 // SetVertexData4f (register, x, y, z, w; ret 0x14): a position ends a vertex
 X86_FUNC(sub_001C0C50) {
     if (g_catch && R32(ctx.esp + 4) == kPosition) {
@@ -291,4 +344,31 @@ X86_FUNC(sub_001C0CF0) {
         return;
     }
     __imp__sub_001C0CF0(ctx, base);
+}
+
+// testing: PGR2_HL_LOG=1 also logs, every 10 s, what decides whether the beam pass (0x32850, thiscall on the car list) draws the
+// followed car's beam: the camera's view mode (+0x10 -> +0x128; 0xC follows no car) and the car's lamps 7 and 8 (and 0, 1),
+// each on when its byte +0x5D is set, +0x5C clear and its strength +0x58 above [0x275C08] (0x1C850)
+X86_EXTERN_FUNC(__imp__sub_00032850);
+X86_FUNC(sub_00032850) {
+    static const bool log = std::getenv("PGR2_HL_LOG") != nullptr;
+    static auto since = std::chrono::steady_clock::now() - std::chrono::seconds(20);
+    if (log && std::chrono::steady_clock::now() - since > std::chrono::seconds(10)) {
+        since = std::chrono::steady_clock::now();
+        const uint32_t cam = R32(0x3CD804), viewer = cam ? R32(cam + 0x10) : 0;
+        const uint32_t mode = viewer ? R32(viewer + 0x128) : 0xFFFF, followed = viewer ? R32(viewer + 0x140) : 0;
+        std::string lamps;
+        if (followed)
+            for (int i : {0, 1, 7, 8}) {
+                const uint32_t l = followed + 0xB68 + i * 0x60;
+                char b[64];
+                std::snprintf(b, sizeof b, " %d:%u/%u/%.2f", i, kernel::G<uint8_t>(l + 0x5D), kernel::G<uint8_t>(l + 0x5C), F(l + 0x58));
+                lamps += b;
+            }
+        LOGR("headlight shadows: beam pass, camera kind %u, view mode %u, followed car %08X, lamps (on/off/strength, limit %.2f):%s",
+             cam ? R32(cam + 0x40) : 99, mode, followed, F(0x275C08), lamps.c_str());
+    }
+    g_beam_pass = true;
+    __imp__sub_00032850(ctx, base);
+    g_beam_pass = false;
 }
