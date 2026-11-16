@@ -37,6 +37,17 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-15 - demos and replays keep fixed game time above 30
+- Races above 30 take game time from the clock (0x2919AD, since 2026-11-01), so a late frame takes more physics steps.
+  Replays and demos are their inputs simulated again: with the clock's uneven steps the cars left the recorded line
+  (the demos "out of time" again after the render thread merge made frames less even). Recorded pad runs never showed
+  it, as XBE_PAD_PLAY already keeps fixed time.
+- hooks.cpp (frame step 0xD90F0): fixed time while the attract demo (0x38384C, the PGR 2 Demos too) or a replay
+  (0x383190's mode, bit 4 of its entry) plays; the log says "a replay: game time fixed" when it changes.
+- Evidence: muted `demos` run, the switch logged at the first demo, all five played to the end, no camera parked
+  except the last demo's end (as in older runs). Not run: the demos from the menu without a pad recording (the case
+  that was wrong), Windows.
+
 ### 2026-11-15 - night: car headlight coronas back (Metal)
 - Coronas were missing or reduced to a dot beside the lamp, with stray dots over car bodies. Three faults:
   the visibility ring (512 KB) passed Metal's 256 KB visibility offset limit, so every query in its upper half read 0

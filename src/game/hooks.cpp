@@ -488,7 +488,20 @@ X86_FUNC(sub_000D90F0) {
     // playing back controller 1 (XBE_PAD_RECORD, XBE_PAD_PLAY): with the clock's time a played back race drifted from the
     // one recorded, the same presses on the same frames moving the car by different steps
     static const bool fixed_time = std::getenv("PGR2_FIXED_TIME") || std::getenv("XBE_PAD_RECORD") || std::getenv("XBE_PAD_PLAY");
-    if (Race60() && !fixed_time) kernel::G<uint8_t>(0x2919AD) = 1;
+    // a replay or a demo (the attract demo, 0x38384C: the PGR 2 Demos too) is its inputs simulated again: it plays with
+    // the fixed time it was recorded with, or the clock's uneven steps take the cars off their recorded line (into the
+    // barriers). A replay as the pause menu tells one (0x383190's mode, its entry's bit 4)
+    if (Race60()) {
+        const int32_t mode = int32_t(kernel::R32(0x383190));
+        const bool replay = kernel::G<uint8_t>(0x38384C) != 0 ||
+                            (mode >= 0 && mode < 64 && (kernel::G<uint8_t>(0x34C2B0 + uint32_t(mode) * 0x4C) & 4));
+        static bool was_replay = false;
+        if (replay != was_replay)
+            LOGR("pgr2: %s: game time %s", replay ? "a replay" : "not a replay",
+                 replay || fixed_time ? "fixed" : "from the clock");
+        was_replay = replay;
+        if (!fixed_time) kernel::G<uint8_t>(0x2919AD) = replay ? 0 : 1;
+    }
     if (uint32_t hz = RaceHz()) {
         bool racing = kernel::G<uint8_t>(0x49E110) != 0;
         kernel::G<uint8_t>(0x48614B) = uint8_t(racing ? hz : 60);
