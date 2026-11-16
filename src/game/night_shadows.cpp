@@ -30,7 +30,9 @@
 #include <cstring>
 #include <vector>
 
+#include "app/perf.h"
 #include "core/log.h"
+#include "game/perf_zones.h"
 #include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
@@ -41,6 +43,11 @@ extern uint32_t street_light_reach;    // src/common/game_info.cpp: percent of e
 extern bool cpu_car_shadows;           // src/common/game_info.cpp
 extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
 float g_shade_power = 0;               // while above 0, each vertex colour set is raised to it (src/game/headlight_shadows.cpp)
+// perf: the street lights' car shadows drawn, the cars the night pass looked at and the lights it found for them, per frame
+std::atomic<uint32_t> g_night_shadows{0}, g_night_cars{0}, g_night_lights{0};
+void TakeNightShadowCounts(uint32_t& shadows, uint32_t& cars, uint32_t& lights) {
+    shadows = g_night_shadows.exchange(0), cars = g_night_cars.exchange(0), lights = g_night_lights.exchange(0);
+}
 uint32_t ShadePower(uint32_t colour) {
     if (g_shade_power <= 0) return colour;
     uint32_t out = colour & 0xFF000000u;
@@ -154,7 +161,10 @@ X86_FUNC(sub_00032D10) {
             WF(r + kLightRadius, F(r + kLightRadius) * float(reach) / 100.0f);
             WF(r + kLightInner, F(r + kLightInner) * float(reach) / 100.0f);
         }
-    __imp__sub_00032D10(ctx, base);
+    {
+        perf::Zone zone(pgr2::kZNightPass);
+        __imp__sub_00032D10(ctx, base);
+    }
     if (!saved.empty())
         for (uint32_t i = 0, k = 0; i < count && k + 1 < saved.size(); i++) {
             const uint32_t r = records + i * kLightRecord, type = R32(r + kLightType) & 0x1F;
@@ -194,15 +204,23 @@ X86_FUNC(sub_0019430F) {
 // the car's shadow mesh drawn (thiscall on the mesh: shade; ret 4)
 X86_FUNC(sub_000C7C00) {
     const uint32_t mode = pgr2::street_light_shadows;
+    if (!g_inner && g_pass && R32(ctx.esp) == kFromDraw) {
+        // which of its car's lights this is (testing: PGR2_ONLY_LIGHT), and the counts for the perf recorder
+        const uint32_t this_car = ctx.ebx - kCarFromPointer;
+        light_index = this_car == last_car ? light_index + 1 : 0;
+        last_car = this_car;
+        if (perf::On()) {
+            pgr2::g_night_shadows.fetch_add(1, std::memory_order_relaxed);
+            pgr2::g_night_lights.fetch_add(1, std::memory_order_relaxed);
+            if (light_index == 0) pgr2::g_night_cars.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     if (g_inner || !g_pass || !g_have || mode == 0 || R32(ctx.esp) != kFromDraw) {
         __imp__sub_000C7C00(ctx, base);
         return;
     }
     g_have = false;
-    // testing: PGR2_ONLY_LIGHT=n draws only each car's n-th light's shadow (0 the first the game finds)
-    const uint32_t this_car = ctx.ebx - kCarFromPointer;
-    light_index = this_car == last_car ? light_index + 1 : 0;
-    last_car = this_car;
+    perf::Zone light_zone(pgr2::kZStreetLight);
     static const int only = std::getenv("PGR2_ONLY_LIGHT") ? std::atoi(std::getenv("PGR2_ONLY_LIGHT")) : -1;
     if (only >= 0 && int(light_index) != only) {
         ctx.esp += 8;

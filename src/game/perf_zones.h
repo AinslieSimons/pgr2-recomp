@@ -2,5 +2,5 @@
 #pragma once
 
 namespace pgr2 {
-enum ZoneId { kZGameView, kZWaterView, kZCubePass, kZCarCubes, kZFlush, kZQueueCars, kZWorldDraw, kZShadows };
+enum ZoneId { kZGameView, kZWaterView, kZCubePass, kZCarCubes, kZFlush, kZQueueCars, kZWorldDraw, kZShadows, kZNightPass, kZStreetLight };
 }

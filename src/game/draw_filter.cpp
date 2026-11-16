@@ -24,6 +24,7 @@ void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust);          // src/ga
 void CarReflectionDraw(const gpu::State& s, gpu::DrawAdjust& adjust);  // src/game/car_reflections.cpp
 void CarTraceDraw(const gpu::State& s, gpu::DrawAdjust& adjust);       // src/game/car_reflections.cpp
 void WaterRegisterLog();                                               // src/game/planar_water.cpp
+void TakeNightShadowCounts(uint32_t& shadows, uint32_t& cars, uint32_t& lights);  // src/game/night_shadows.cpp: since the last call
 }
 
 namespace {
@@ -147,7 +148,7 @@ OneShadowEach g_one_shadow;
 // 0 main, 1 mirror, 2 reflection cube, 3 light pool), a car's own cube being drawn, or the water's reflection target.
 // The HUD and menus count with the camera last drawn, or "other" outside a race.
 uint32_t g_view_camera = 0;  // the last main view's camera: at a present none is being drawn
-enum Pass { kOther, kMain, kMirror, kCube, kCarCubes, kLightPool, kWater, kHud2d, kNoCamera };
+enum Pass { kOther, kMain, kMirror, kCube, kCarCubes, kLightPool, kWater, kHud2d, kNoCamera, kShadowMap, kStreetShadow };
 enum Kind { kKindWorld, kKindBlended, kKindCar, kKindWater, kKindPoints, kKind2d };
 void LabelPass(const gpu::State& s) {
     if (!perf::On()) return;
@@ -157,7 +158,13 @@ void LabelPass(const gpu::State& s) {
     const bool car = modes == 0x8401 || modes == 0x8421 || modes == 0x8021 || modes == 0x0421;
     perf::SetKind(flat ? kKind2d : car ? kKindCar : modes == 0x64621 ? kKindWater : s.simple[gpu::kMBlendEnable >> 2] ? kKindBlended : kKindWorld);
     int pass = kOther;
-    if (pgr2::InWaterReflection(s)) pass = kWater;
+    // a car's shadow map (depth only, the sun's or a street light's: night_shadows.cpp), and at night the street lights' car shadows
+    // (a multiply: the flattened hull's plain colour, or a ground mesh reading the map)
+    const bool night = kernel::R32(0x49EF6C) == 1, multiply = s.simple[gpu::kMBlendEnable >> 2] && s.simple[gpu::kMSrcBlend >> 2] == 0 &&
+                                                              s.simple[gpu::kMDestBlend >> 2] == 0x300;
+    if (!s.rt.data && s.zs.data) pass = kShadowMap;
+    else if (night && multiply && (((s.vs_handle & 0xFFFF) == 0x42) || (s.textures[0] && !flat))) pass = kStreetShadow;
+    else if (pgr2::InWaterReflection(s)) pass = kWater;
     else if (pgr2::g_extra_cube) pass = kCarCubes;
     else if (flat) pass = kHud2d;
     else if (!kernel::R32(0x3CD804)) pass = kNoCamera;
@@ -199,17 +206,20 @@ void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
 // called from the game's init (src/common/game_info.cpp): a static initializer here never ran in the Windows exe
 void InstallDrawFilter() {
     pgr2::WaterRegisterLog();
-    perf::SetPassNames({"other", "main", "mirror", "cube", "car_cubes", "light_pool", "water", "hud_2d", "no_camera"});  // Pass, in order
+    perf::SetPassNames({"other", "main", "mirror", "cube", "car_cubes", "light_pool", "water", "hud_2d", "no_camera", "shadow_map", "street_shadow"});  // Pass, in order
     perf::SetKindNames({"world", "blended", "car", "water", "points", "2d"});                                             // Kind, in order
-    perf::SetZoneNames({"game_view", "water_view", "cube_pass", "car_cubes", "flush", "queue_cars", "world_draw", "shadows"});  // ZoneId, src/game/perf_zones.h
+    perf::SetZoneNames({"game_view", "water_view", "cube_pass", "car_cubes", "flush", "queue_cars", "world_draw", "shadows", "night_pass", "street_light"});  // ZoneId, src/game/perf_zones.h
     // the city (the race's index), a replay (as the pause menu tells one), the view mode, the cars in the race
-    perf::SetState({"city", "replay", "view_mode", "cars"}, []() -> std::vector<int64_t> {
+    perf::SetState({"city", "replay", "view_mode", "cars", "street_shadows", "night_cars", "night_lights"}, []() -> std::vector<int64_t> {
+        uint32_t shadows = 0, cars = 0, lights = 0;
+        pgr2::TakeNightShadowCounts(shadows, cars, lights);
         const int32_t mode = int32_t(kernel::R32(0x383190));
         // read between frames, while the game may be tearing a race down: only what looks like an address in its memory
         const uint32_t held = g_view_camera ? kernel::R32(g_view_camera + 0x10) : 0;
         const uint32_t viewer = held >= 0x10000 && held < 0x4000000 ? held : 0;
         return {int32_t(kernel::R32(0x38317C)), mode >= 0 && mode < 64 && (kernel::G<uint8_t>(0x34C2B0 + uint32_t(mode) * 0x4C) & 4) ? 1 : 0,
-                viewer ? int32_t(kernel::R32(viewer + 0x128)) : -1, int32_t(kernel::R32(0x297390 + 0x0C))};
+                viewer ? int32_t(kernel::R32(viewer + 0x128)) : -1, int32_t(kernel::R32(0x297390 + 0x0C)), int64_t(shadows), int64_t(cars),
+                int64_t(lights)};
     });
     const char* nearer = std::getenv("PGR2_SHADOW_NEARER");
     bool shadow = nearer && *nearer == '1';
