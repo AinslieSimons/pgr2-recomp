@@ -223,6 +223,163 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
 - **The render thread's header ring** held 32768 copies (1 MB). PGR2 points one header at each material in turn, and a city drawn twice wrapped it before the render thread read the copies: wrong textures on everything and about 4 fps, on Metal only, as the reference renderer has no render thread. It is 16 MB now. The symptom looks like memory corruption or a broken race, and moving the targets did not change it.
 - **Cost** (Metal, M4 Pro, render scale 3, 30 fps cap): Sydney route 115 in normal play holds 30 with 1 slow frame in 300, the pass running. A test camera at -1000 12 -200 facing the city: 30 off, 17.5 on, unchanged by halving the object range (+0x20), so the time is not in small objects; where it goes is not known. Facing out to sea from the same place holds 30.
 
+## Tyre smoke and other particles
+
+Read from the code only (2026-11-10, static analysis of the recompiled functions, no runs). Addresses are PGR2's.
+The disc has no particle or effect data (no file or string names smoke or particles; `CarDynamics/*.ini` is handling,
+`camera_settings.ini` the cameras, `Frontend.ini` debug switches): every value below is in the code.
+
+- **[PGR2] The particle effects** live at 0xF5D60-0xFB800, each a pool of particle records, emitters holding linked lists
+  of them, an update per frame and a draw (immediate mode, `D3DDevice_Begin` 0x1C0D40). They use the C library `rand()`
+  (0x1B2944, MSVC's 0x343FD / 0x269EC3, 0 to 32767) and the frame step's seconds at 0x28F4EC. The car code drives them:
+  per frame 0x20690 (updates), per car draw 0x21CD0 (draws), 0x1CD30 (clears), the wheel update 0x23670 (from 0x2507D).
+  - Bouncing debris: 0xF7410 (spawn, `rand` in 0xF7130), 0xF74A0 (update: gravity 9.81 at 0x27B7CC, bounce off a ground
+    height), 0xF7620 (draw).
+  - Sparks or chips: 0xF9B20 (spawn N into an emitter, at most 200, from a pool of 400 records of 0x24 at 0x3D3F78;
+    `rand` in 0xF9760), 0xF95B0 (particle update: gravity 10 at 0x275E48, velocity times 1 - dt, colour times 1 - 2 dt
+    then each byte less 1 a frame; alive while it has colour; dt clamped to 0.5), 0xF9BB0 (update), 0xF9C30 (draw).
+  - Something weather dependent, likely tyre spray: 0xFB3B0 (from 0x23670), reads 0x49EF70 against 2 (inferred: the
+    weather); spawn 0xFA980.
+- **[PGR2] Tyre smoke and dust** (the wheel emitter, at +0x134 in each wheel object):
+  - Set up by 0xF87C0 (thiscall: max particles, delay; from 0x232C0 with 50 and 30): the emitter starts stopped, the
+    delay counts down one a frame (0xF8D70) before its first particle. Particles come from the pool at 0x3CFAA8 (0xF89B0);
+    an emitter's list holds at most 50 (0xF8C00, 0x32).
+  - Steered each frame by 0xF87F0 (thiscall: wheel place, previous place, base colour, intensity 0 to 1, type; ret 0x14),
+    which keeps the place and the last one, half the car's velocity as the particles' drift (+0x18B4.. x 0.5), and runs
+    the emitter while the intensity is at least 0.1 (the double 0x27B820). By type: **1** the colour given, alpha
+    intensity x 196 (0x277348): tyre smoke (inferred from the colour, the cases and the call site); **2** the colour x
+    0.25 then 0x432A0(0x40, 0x30, 0x20), alpha x 200; **3** grey 0.75, alpha x 64 (0x27674C); **4** brown (0.6, 0.5,
+    0.3), alpha x 200 (0x275E20): dust; **0** stops it. The wheel update 0x23670 passes 3 (0x23970), 4 (0x23BE0), 1
+    (0x23CD3) and 0 (0x23D14, 0x23D88); the intensity is worked out in 0x23670 from the wheel (stored at its [esp+0x2C]
+    by 0x2380E; not traced further), halved (x 0.5, the double 0x276078) where the surface's +0x08 is below 0.
+  - Emitted by 0xF8D70 each frame: every particle is updated (0xF8630); while the emitter runs, each one that dies is
+    replaced at once by a new one at a random point between the wheel's last and current places (0xF8A50); while it is
+    stopped the dead are removed. With no particle made that frame and fewer than its maximum, a new one half the time.
+    So the trail's length is the particles' life times the population (at most 50 a wheel).
+  - A new particle (0xF8A50): size 0.15 m (0.1 for type 2), placed within +-0.15 m across and along (not type 2), rising at
+    0 to 4 m/s, drifting +-0.5 m/s across and along, plus the drift given.
+  - Its life (0xF8630, dt the frame step; type 3 counts it twice): it moves by its velocity, which falls by (1 - 4 dt)
+    each frame (types 3 and 4 also lose 4 dt of upward speed); it grows, by dt / (6 x size) for type 1 (slowing: about
+    sqrt(0.0225 + t / 3) metres at t seconds) and by dt for the others; its alpha (+0x13) fades in two stages:
+    - from its start down to 60: alpha x (1 - 2 dt) a frame (times 4 dt for type 3), the same at any frame rate: about
+      0.6 s from 196 (full intensity tyre smoke);
+    - below 60: one less a frame whenever alpha x dt x 60 > rand() / 32768, which at 30 or 60 frames a second is every
+      frame: 60 frames. **This tail is frame rate bound**: 2 s at the console's 30, 1 s at 60 (`race_fps` 60 and above),
+      0.5 s at 120. Full intensity tyre smoke lasts about 2.6 s on the console and 1.6 s at 60.
+  - Drawn by 0xF8BA0 (handed to the camera's draw lists, 0x186AB0, with 6.0), cleared by 0xF8F40.
+- **[PGR2] Other frame counted effects**: the sparks' colour bytes also fall by one a frame (0xF95B0), and the smoke
+  emitter's start delay counts frames (30: 1 s at 30, 0.5 s at 60).
+- **[PGR2] The smoke draw 0xF8F50** copies an emitter's particles into 16 byte entries of an array on its stack (from
+  esp+0x4C, frame 0x35C): room for about 50, so an emitter must not hold more (more ran over its callers' saved
+  registers: a crash in the view 0x17FCC0, esi garbage).
+- An emitter (the wheel's +0x134): +0x10 type, +0x14 stopped, +0x18 particles, +0x1C most it asks for (0xF87C0's
+  first argument), +0x24 place, +0x30 last place, +0x3C drift, +0x48 colour, +0x4C start delay, +0x50 its list (+0
+  head, +4 tail, +0xC cursor, +0x10 count; a record's link at its +0x28, the offset at its class's +4). 0xF8D20 adds
+  one particle at the wheel (thiscall: type; pool take, list add, 0xF8A50). `rand()` keeps its state at +0x14 of the
+  thread data 0x1B5E78 returns. The draw's first pass sums each visible particle's squared projected size (0x15D70 on
+  the camera at 0x3CD804: out, place, 0; size x camera +0x130 x width x out +0xC, at most the width) and fades the
+  emitter's alpha by min(1, 2 sqrt(width x height / sum)).
+- Done in `src/game/smoke.cpp` (setting `smoke_duration`, Recomp > Detail "Tyre Smoke"): the pool has 4600 more records
+  (5000), 0xF8630 is replaced by the same update with the
+  alpha's first stage duration times slower and the tail one step each 1/30 s x the duration, `rand()` called as before.
+- Also in `src/game/smoke.cpp`: cars stir the smoke (`smoke_physics`). Each particle's damping (1 - 4 dt) is towards
+  the air's velocity at it rather than still air; the air is procedural, from each race car's place (+0x44) and velocity
+  (dynamics +0x94 then +0x18B4) taken before the frame step: a wake of samples every 1/30 s kept 1.5 s (slipstream at half
+  the car's velocity, spreading and dying with age; a Lamb-Oseen trailing vortex pair off the flanks (G 1.2 m x speed, core 0.5 m, wake kept 2.5 s, fading over 1 s), turning down between
+  them and out along the road), potential flow round the body as it is now (a sphere scaled to a 2.2 x 0.9 x 0.7 m
+  half-size hull, only ahead of the rear axle: as a 1.8 m sphere everywhere the rear wheels sat inside it, where the
+  formula carries the air forward at more than the car's speed, and each car's own smoke rode along with it instead of
+  trailing), a ground clamp at the height each particle was made (0xF8A50), and divergence-free curl-of-sines
+  turbulence where the wake is. `PGR2_SMOKE_WIND="x y z"` adds a steady wind to every particle (a check that the air
+  reaches what is drawn: 0 6 0 lifts the smoke in columns); `PGR2_SMOKE_LOG=1` logs the air at the particles every 10 s,
+  and smoke takes the car's sun share (`smoke_lighting`: 0xF87F0's colour at the emitter's +0x48 times 0.45 + 0.55 x the
+  car's brightness +0x150C, the wheel's car at its +0xD4; the emitter is the wheel's +0x134). The game itself shades
+  nothing of the smoke but by the sun's colour (0x23620 multiplies the base colour +0xDC by 0x49EEA8).
+- Also (`smoke_density`, "Smoke Particles", 300 by default): each wheel asks for 50 x the density (0xF87C0), its list
+  holds up to 200 (0xF8C00 replaced), it grows density times as fast (after 0xF8D70, extra 0xF8D20 calls half the
+  frames each, moved to a random point between the last and current place, `rand()`'s state put back after), each
+  particle starts 1/sqrt(density) the size and grows to match (the same area of smoke), and 0xF8F50 is called for each
+  48 of a longer list, each part's alphas scaled by the whole list's fade over the part's so a screen full of smoke
+  fades as it would drawn at once.
+- How long smoke should last, for the tuning: game particle smoke is usually 2 to 5 s a particle, randomised (Epic's
+  Niagara smoke example 3 to 5 s; Unity's exhaust example 2.5 s, its 5 s default called too long for car fumes); real
+  burnout smoke in still air dilutes over seconds to a minute or two, wind clearing it sooner. The console's 2.6 s
+  (Console duration) is inside the game range; 1.5x to 2x (about 4 to 5 s) is the lingering end.
+- A bug of ours (fixed 2026-11-10): the replaced 0xF8630 read `rand()`'s result from ctx.eax after `CallGuest`, which
+  puts the caller's registers back, so each particle's 'random' number was its own address's low bits, fixed; where it
+  was above 30 dt / duration the tail never fell and the particle never died (about half at Console duration, 60 fps).
+  `CallGuest`'s return value is the guest's eax.
+- The game's emission comes in waves: a wheel makes a particle only to replace one that died (and, below its most, one
+  half the frames), so particles born together die together and, once lives are long enough to fill the list, the wheel
+  makes nothing between waves (gaps at the wheel, the smoke looking thin and quick to go). smoke.cpp keeps a steady
+  rate per wheel besides (50 a console life of 2.59 s, x the density), its most the rate x the life x 1.3 (at most 400;
+  pool 10000).
+- Smoke rising over the cars (2026-11-10, measured in tools/smoke-lab, drift circle 18 m/s): 28% of the particles above
+  roof height with smoke_physics on, none off. The curl-noise turbulence moves smoke up and down alike but the road
+  clamp stops the downward half, so it ratchets up; the trailing vortices, not knowing the road, lifted it too. Now the
+  turbulence's vertical part grows from 0 at the road over 1 m and each vortex has its image under the road (the
+  standard ground-effect model), and the heavier defaults (damping 2.5) keep it low: none above the roof without lift.
+- A particle's own car (`own_wake`, 0 by default): a drifting or sliding car's own wake, vortices and body flow sent
+  its smoke shooting off in all directions; now only other cars' air stirs it (the smoke still takes the game's drift,
+  half the car's velocity, as it is made). The owner is the emitting wheel's car (emitter - 0x134 + 0xD4), set while
+  0xF8D70 runs and kept beside each record; on demo 2 all 2000 checked were race cars in the list at 0x297390 (+0x1C00,
+  stride 0x6990). In the lab (drift circle 18 m/s) mean smoke speed fell from 1.7 to 1.1 m/s.
+- The game's cars for the smoke lab: `XBE_TRACE_DUMP=frame` (Metal, with `traced_reflections` on) writes that frame's
+  traced scene, every car draw's triangles in the world with its world transform (c[110] to c[112], car_reflections.cpp)
+  and material colour (c[147]; glass flagged), to trace_scene_<frame>.txt beside the exe. tools/smoke-lab/car_from_scene.py
+  groups the draws into cars as BuildScene does (demo 2 frame 4000: two cars, 42 and 47 draws, about 14000 triangles
+  each, 4.86 and 4.04 m long), puts one in its body draw's frame (the transform scales by 10; the up axis is the
+  column nearest world y, the length the longer of the others) and writes tools/smoke-lab/local/car.json (git-ignored).
+  Both cars came out back to front on the model's + axis; the windows (glass in the upper half; the headlamp lenses are
+  glass too) sit behind the middle, which the script uses to turn it. The wheels' centres are about +-1.28 m along.
+- What made the trail read as beads on the road rather than a plume (tools/smoke-lab, straight slide 15 m/s): every
+  puff born opaque and the same size, nothing moving it once the cars had gone, one flat colour. Now (smoke.cpp, all
+  in Tune): size and alpha varied per puff (+-45%, +-40%, host random numbers so rand()'s sequence stays the game's),
+  faded in over 0.15 s, slow curl-noise eddies in all smoke growing with age (2.2 m/s at 0.25 /m, full at 1.5 s; the
+  vertical part damped near the road), more warm rise (lift 1) and growth (1.6), and darker near the road (x0.7, full
+  colour 2 m up). The record's +0x10 now holds what is drawn; the life's alpha and the colour as made are kept beside it.
+- **[PGR2] No wind in the game**: no wind in the XBE's strings (only Windscreens.ini), the disc's text files or
+  `Frontend\Cities.Ini` (per city: name, display name, draw distance, texture cache, audio, plates, radio, ID); the
+  areas are paks and `<city> Frontend Maps.dat`; weather (0x383184) picks a lighting set. Cities.Ini's order is the
+  race's city index at 0x38317C: 0 Edinburgh, 1 Moscow, 2 Barcelona, 3 Washington DC, 4 Chicago, 5 Florence,
+  6 Stockholm, 7 Hong Kong, 8 Yokohama, 9 Sydney, 10 Nurburgring (11 Garage, 12 Showroom, then test areas); 9 and 7
+  agree with the water heights found before. smoke.cpp's wind is ours: each city's approximate average (10 m up,
+  climate records: 5.0 Edinburgh to 2.2 Florence) x 0.5 for street level, a random direction each race, gusts carried
+  down the wind, weaker near the road. Lab: smoke over 2 s old moved 6 m downwind in Chicago against still air.
+- Burnouts against skids (smoke.cpp, lab): a smoking wheel is a burnout by how slow its car is (full at a standstill,
+  none from 8 m/s), and then a Lamb-Oseen vortex about its axle (the tyre's top turning forward, imaged under the road)
+  swirls its smoke round the wheel and throws it back; lab: smoke within 0.8 m of the axle circles at 5.4 rad/s
+  against 0.1 without. The car's frame for the axle is read from the car record before its place (rows at +0x14,
+  +0x24, +0x34 of 16 bytes, or 12; the one that reads as a rotation; the model's +z points back), not yet checked in
+  the game. A faster car's trailing vortices are tighter (core from 0.5 m at 15 m/s to half that at 30 m/s and up), and
+  smoke follows strong car air faster (damping + 12/s, scaled by the air's speed over 5 m/s) so it can wrap round them.
+- Burnout smoke like a photo of a real one (smoke.cpp, lab): that share of a burning-out wheel's puffs comes off the
+  tyre itself, anywhere on the tread from the road up the back (140 degrees), across its 0.25 m width, leaving along the
+  tread at 4 m/s (back along the road, then up the back of the tyre) and spilling out of its outer face at 0.6 to 1.8
+  m/s, 1.6 times the size, 1.4 times the alpha, with no fade-in, and 1.5 times more of them at full burnout (the
+  wheel's most allows for it). The car's speed and place come from its dynamics and +0x44 (physics on or off). In the
+  lab's close-up beside the wheel the tyre is shrouded and the smoke rolls off its back and out behind; the draw's
+  screen-coverage fade (0xF8F50) thins it when the camera is that close.
+- Tyre smoke and the literature (2026-11-10): no study measures visible smoke from burnouts or drifts. Tyre wear
+  particle studies (non-exhaust emissions; EEA guidebook, Mathissen et al. 2011 Atmospheric Environment 45, KIT drum
+  tests) find the sliding part of the contact patch drives emissions: slip angle and force matter most (quadratic in
+  lateral acceleration), road speed little, normal driving 1 to 9 mg/km (invisible). Visible smoke is rubber breaking
+  down, products and particles changing around 300 to 500 C (most near 400 C). So smoke.cpp keeps a tread temperature
+  for each smoking wheel: it heats with the wheel's intensity (the game's slip measure; 150 C/s at full) and cools
+  towards the air (25 C) at 0.25/s plus 0.01/s for each m/s of the car; the smoke goes from 0.35 of full (a cold tyre)
+  to full between 200 and 400 C, and a burnout's puffs off the tyre and its swirl with it. Lab: a burnout 158 C at 1 s,
+  heavy from about 1.4 s, full at 4 s (405 C); a race start peaks near 100 C (light throughout); a drift at 18 m/s and
+  0.8 settles near 300 C (0.69 of full). Smoke made in a building's shade is 0.8 of the sun's (was 0.45: with the
+  darkening near the road it came out near shadow colour).
+- `smoke_tune.txt` (beside the exe and pgr2.toml, or `PGR2_SMOKE_TUNE`), read again within a second of a change: every
+  number of smoke.cpp's Tune ("name = value", # comments). Defaults are heavier than the game's (spawn 0.35 m not 0.15,
+  rise 1 m/s not 4, spread 1.2 not 0.5, opacity x1.3, held 0.5 s, fade 1 not 2, growth 0.5 not 1/6, damping 2.5 not 4,
+  lift 0.25); the game's are noted beside each. tools/smoke-lab is the same model in a browser with a stand-in car.
+- Ways to make smoke linger (the first three now done): count the tail in time rather than frames (one less each 1/30 s), which gives the
+  console's look at any frame rate; a slower fade (the 2 at 0x275C44 is shared with other code, so in 0xF8630 alone);
+  a larger population (the 50 at 0x232ED and the list cap 0x32 in 0xF8C00), since longer lives with the same 50 make a
+  thinner trail; the pool at 0x3CFAA8 holds all wheels' particles and its size is not yet read.
+
 ## The gearbox
 
 - **[PGR2]** The player's gear is the signed byte at 0x29DACA + car x 0x6990 (the gearbox 0x29DAB0, +0x1A; -1 reverse,

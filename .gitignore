@@ -31,3 +31,6 @@ settings.toml
 /captures/
 /PGR2-package.zip
 /PGR2-package.zip.json
+
+# the smoke lab's car model, made from the game (tools/smoke-lab/car_from_scene.py)
+/tools/smoke-lab/local/

@@ -149,6 +149,7 @@ void ApplyDetail();                    // src/game/detail.cpp
 void MirrorFarBefore(uint32_t camera);
 void MirrorRangeAfter(uint32_t camera);
 void ApplySettingsEntry();  // src/game/settings_entry.cpp
+void SmokeFrame();          // src/game/smoke.cpp
 }
 
 // the intro movies are 640x480 4:3 pictures the XMV player draws as one screen quad from a YUY2 texture: on a wider
@@ -499,6 +500,7 @@ X86_FUNC(sub_000D90F0) {
     pgr2::ApplySettingsEntry();
     ApplyDrawDistance();
     pgr2::ApplyDetail();
+    pgr2::SmokeFrame();
     // once a race's results are done (0x383984, cleared by the next race's setup) visibility reports are waited for: the
     // post-race screens came out garbled with them a frame late
     gpu::g_reports_wait.store(kernel::G<uint8_t>(0x383984) != 0, std::memory_order_relaxed);
@@ -768,6 +770,20 @@ X86_FUNC(sub_0017FCC0) {
     }
     perf::Zone zone(pgr2::kZGameView);
     __imp__sub_0017FCC0(ctx, base);
+}
+
+// a view's car lights (0x42CE0: from the race view 0x17FCC0, the reflection cubes 0x180040, the light pool 0x180230 and
+// 0x82BE7): the coronas (0x31570 -> 0x415B0) are screen space quads drawn without the depth test, so they were taken
+// for 2D and squeezed toward the centre with the HUD (the attract demo's 4:3, a frame wider than the HUD's shape),
+// landing beside their lamps, over the car's body. Nothing in the pass is 2D: hud_aspect wide enough that none is
+// squeezed, the caller's restored after
+X86_EXTERN_FUNC(__imp__sub_00042CE0);
+X86_FUNC(sub_00042CE0) {
+    float& hud = d3d::State().hud_aspect;
+    const float was = hud;
+    hud = 100.0f;
+    __imp__sub_00042CE0(ctx, base);
+    hud = was;
 }
 
 // the system link session's teardown (0x165AF0, ecx the session): XNET_TRACE=1 logs who ends it, with the guest stack

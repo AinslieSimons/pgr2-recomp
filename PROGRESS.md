@@ -37,6 +37,132 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-15 - night: car headlight coronas back (Metal)
+- Coronas were missing or reduced to a dot beside the lamp, with stray dots over car bodies. Three faults:
+  the visibility ring (512 KB) passed Metal's 256 KB visibility offset limit, so every query in its upper half read 0
+  (all 147,000 such reports in the demos); counts were reported in pixels while the game divides by its multisample
+  count (2), halving every corona; and the corona quads (screen space, no depth test) were squeezed toward the centre
+  as HUD, off their lamps and over the car's body.
+- Fixed: SDK ring 1 << 15 and State::count_samples (all three renderers); hooks.cpp wraps the light pass 0x42CE0 with
+  hud_aspect 100 so it is never squeezed.
+- Evidence: the five night demos (PGR2_NIGHT=1): full coronas with streaks on the 350Z and MINI, on their lamps; the
+  GTO's dots over its boot gone; the attract 2D still squeezed. Research notes: .local/research/night-races.md.
+- Next: smoke run, an in-race night check (mirror too), D3D11/D3D12 build on Windows.
+
+### 2026-11-10 - smoke: a tread temperature for each wheel decides how much smoke
+- From the literature (FINDINGS: sliding drives what comes off a tyre, rubber smokes from about 200 to 400 C): the timed
+  burnout build-up is replaced by a tread temperature per wheel, heating with its slip and cooling with the air and the
+  car's speed; smoke from 0.35 (cold) to full between 200 and 400 C, a burnout's puffs and swirl with it. 7 tuning
+  values (Tyre heat in the lab, which shows the rear tyres' temperatures), 68 in all, game and lab the same. Lab:
+  burnout full at 4 s, race start light throughout, drift settling at 0.69. The game builds; not run.
+
+### 2026-11-10 - smoke: burnouts build up; race starts in the lab; lighter in shade
+- Harry: burnout smoke started too aggressively; a race start's slip should differ from an extended burnout; smoke too
+  dark in shadow. A burnout now builds from 35% to full over 3 s (burn_ramp, burn_start, burn_cool), so a launch stays
+  light; the lab has a race start mode (wait, launch with fading wheelspin, repeat); shade 0.8 (was 0.45). 64 tuning
+  values, game and lab the same. The game builds; not run (checked in the lab).
+
+### 2026-11-10 - smoke: burnouts off the tyre, as in Harry's reference photo
+- A burning-out wheel's puffs come off the tyre's tread round its back, leave along it and spill out of its face,
+  bigger, denser, thick at once, and more of them (7 new tuning values, 61 in all, game and lab the same). Lab close-up:
+  the tyre shrouded, the smoke rolling off it and out behind. The game builds; not run (checked in the lab).
+
+### 2026-11-10 - smoke: tight vortices at speed, burnout swirl, city wind
+- Harry: tight vortices when a car goes through fast; wind across the track; burnouts with tight swirls round the
+  wheels, unlike skids. Lab first, then smoke.cpp (built, not run; Harry checks in the lab): trailing vortex cores
+  shrink with speed and smoke follows strong car air faster; a burnout (smoking at low car speed) puts a vortex round
+  each tyre's axle; the wind is ours (the game has none, FINDINGS), per city from Cities.Ini's order. 11 new tuning
+  values, 54 in all, the same in the game and the lab (checked by script).
+- To check in the game: the car frame rows at +0x14 (logged once if they do not read as a rotation).
+
+### 2026-11-10 - smoke: plumes rather than beads
+- Harry: the trail looked like separate blobs on the road. Added (lab first, then smoke.cpp, every value in Tune and
+  the lab): per-puff size and alpha variation, a 0.15 s fade-in, billowing eddies in all smoke growing with age,
+  shading darker near the road, and more rise and growth (defaults in FINDINGS). In the lab the straight slide now makes
+  one continuous plume that thickens and rises behind the car. The game builds; not run (Harry: check in the lab).
+- The lab's car model is also written as local/car.js, so the lab opened straight from disk loads it (file:// pages
+  cannot fetch car.json).
+
+### 2026-11-10 - smoke lab: the game's own car models
+- SDK (metal.mm): `XBE_TRACE_DUMP=frame` writes that frame's traced scene (the car draws in the world, their transforms
+  and colours) to trace_scene_<frame>.txt. tools/smoke-lab/car_from_scene.py cuts a car out (`--list`, `--car N`,
+  `--flip`), puts it in its own frame, wheels on the road, turned by where its windows are, into
+  tools/smoke-lab/local/car.json and car.js (git-ignored: the game's model from your disc). The lab loads car.js at start,
+  opened from disk or served (car.json needs a server), or by "Load car model", the passing car repainted; boxes when there is none. No textures (tyres drawn dark).
+- Made from demo 2 frame 4000 (muted, traced reflections on): 4.86 m, 14302 triangles; drawn in the lab drifting.
+  To make one of another car: run a race or replay with traced reflections and XBE_TRACE_DUMP set, then the script.
+
+### 2026-11-10 - smoke: a car's own wake no longer throws its smoke about
+- Harry: drifting or sliding, the smoke should not be sent shooting off by the car making it. Each particle now records
+  its car (the emitting wheel's +0xD4, while 0xF8D70 runs) and AirAt scales that car's air by `own_wake` (0 by default;
+  in smoke_tune.txt and the lab). Demo 2: the mapping matched all 2000 smoking wheels to race cars; lab: mean smoke
+  speed 1.7 to 1.1 m/s in a drift. Other cars still stir it.
+
+### 2026-11-10 - smoke lab, live tuning file, heavier smoke, no more smoke over the cars
+- tools/smoke-lab/index.html: the wheel smoke (0xF87F0, 0xF8D70, 0xF8A50, 0xF8630, the draw) and smoke.cpp's
+  additions in a browser (three.js, lil-gui), with a stand-in car (burnout, drift circle, straight slide; speed, slip
+  angle, intensity), a second car driving through, every tuning value, the menu settings, air arrows and wake vortices;
+  it copies, downloads or opens smoke_tune.txt. Open the file in a browser (no build); the smoke texture is a drawn puff.
+- The game reads smoke_tune.txt beside the exe (or PGR2_SMOKE_TUNE) and again within a second of a change: demo 2 picked
+  up a file written mid-run ("2 tuning values", the unknown key ignored). 0xF8A50 is now ours (the game's, rand() in the
+  same order, with the tuning's numbers).
+- Found with the lab: smoke over the cars was the turbulence ratcheting off the road clamp plus vortices not knowing the
+  road (28% above roof height, 0% physics off); fixed with image vortices and turbulence damped near the road. The thin,
+  quick look was the game's wave emission (only dead particles replaced) starving the wheels once lives grow; now a
+  steady rate per wheel and a list as long as the life needs (up to 400, pool 10000).
+- Heavier defaults (FINDINGS). Demo 2 (muted, 150 s): no crash, thick low smoke trailing the cars, live count back to a
+  few between bursts. Maybe too thick for some shots; Harry to tune in the lab.
+
+### 2026-11-10 - tyre smoke that never died; stronger vortices
+- Harry: at 1x the smoke never dissipated. Our bug: the replaced particle update read rand()'s result from ctx.eax after
+  CallGuest (which restores the caller's registers), so each particle's draw was fixed and about half at Console
+  duration never finished their tail. Now it uses CallGuest's return value; demo 2 (PGR2_SMOKE_LOG now logs the pool's
+  live count) falls to 1 to 5 particles between bursts. The earlier "lasts too long" was likely this, so smoke_duration's
+  default is back to 100 (the console's 2.6 s; game smoke is typically 2 to 5 s, FINDINGS).
+- Vortices stronger: circulation 1.2 x speed (was 0.6), core 0.5 m (0.3), wake kept 2.5 s (1.5) fading over 1 s (0.6),
+  turbulence 60% (35%). Demo 2: smoke curls up in columns beside and behind the cars.
+
+### 2026-11-10 - tyre smoke: more, smaller particles (the 50 a wheel lifted)
+- Setting `smoke_density` (Recomp > Detail "Smoke Particles": Console, 2x, 3x, 4x; 300 by default, `PGR2_SMOKE_DENSITY`):
+  each wheel holds 50 x the density (up to 200; 0xF87C0 hooked, 0xF8C00 replaced), grows that many times as fast
+  (extra 0xF8D20 spawns after 0xF8D70, spread between the wheel's last and current place, the game's rand() state put
+  back), each particle 1/sqrt(density) the size, growing to match. The draw 0xF8F50, whose stack holds 50, is called per
+  48 of the list, each part's alphas scaled by the whole list's screen-coverage fade.
+- Demo 2 at 3x (muted, 150 s, 29 shots): no crash; the smoke is finer and shows the wake: lifted into a plume behind a
+  passing car, trailing and spread. To try on Windows/macOS in a race: the look at 2x/3x/4x and the frame rate (each
+  long list costs a projection call per particle for the fade).
+
+### 2026-11-10 - smoke physics: each car's own smoke no longer rides with it
+- Harry: the physics showed even less than before. Not a missing path: with `PGR2_SMOKE_WIND="0 6 0"` (a test wind added
+  to the air at every particle) the second demo's smoke rose in columns, so the air reaches what is drawn. The cause was
+  the body term: potential flow round a 1.8 m sphere put the rear wheels inside it, where the formula carries the air
+  forward at more than the car's speed, so each car's smoke was dragged along at its wheels rather than trailing.
+- Now: the sphere is scaled to a 2.2 x 0.9 x 0.7 m half-size hull and applies only ahead of the rear axle (behind a car
+  the flow separates into the wake, which the slipstream, vortex pair and turbulence model); the ground clamp
+  (each particle's spawn height, from 0xF8A50) keeps the downwash's smoke on the road.
+- Demo 2 (muted, shots 04/11): smoke now spreads out to the side and trails back over the wall where physics off
+  leaves it bunched at the wheels. Finer swirls need more, smaller particles: each emitter is held to 50 by the
+  0xF8F50 draw's stack array, so that draw would need replacing (or calling in batches of 50) first.
+
+### 2026-11-10 - tyre smoke: the console's duration at any frame rate, longer if wanted, up to 5000 particles
+
+Read from the code (FINDINGS.md, "Tyre smoke and other particles"): the smoke's faint tail lost one alpha step a frame, so
+at 60 fps it lasted half the console's (about 1.6 s against 2.6 s for full smoke), and all wheels share 400 particles.
+`src/game/smoke.cpp`: the particle update (0xF8630) times the tail in seconds; setting `smoke_duration` (Recomp > Detail
+"Tyre Smoke": Console, 1.5x, 2x, 3x, 4x; `PGR2_SMOKE`) slows both fade stages; the pool gets 4600 more records (5000)
+and each wheel's emitter holds 50 x the duration (at most 200) from the next race. Builds; not run (the user tests).
+Then: cars stir the smoke they drive through (`smoke_physics`, Detail "Smoke Physics") and smoke made in shade is
+darker (`smoke_lighting`, Detail "Smoke Lighting", from the car's brightness, the city's baked shade flags). Builds;
+not run. Each particle keeps the light it was made in.
+Then (the first stirring too weak to see: a car is within 4 m of a puff for a quarter of a second): smoke now eases
+towards the air's velocity, and the air holds each car's wake for 1.5 s (slipstream, trailing vortices, flow round
+the body, turbulence; FINDINGS.md). Duration choices 0.5x to 3x, 0.75x by default (4x had been found too long).
+Builds; not run.
+Crash soon after a race started (the user): the smoke draw copies each wheel's particles into a stack array with room
+for about 50, and the raised per wheel limit overran it. The limit is back to the game's 50; the pool stays at 5000
+(the game's 400 ran out with several cars smoking). A 150 s replay of the race recording: no crash, the extra records
+in use from 48 s.
+
 ### 2026-11-14 - upstream performance work merged: prep thread, NEON state compare (branch upstream-perf; SDK upstream-perf)
 SDK `upstream-perf` (from `macos-port` 44c0b8a): hk21x/XboxXBERecomp main (60fc186) merged. Conflicts kept ours for the aspect/16:10 settings code (`settings.cpp`, `app.h`), both for the rest. The render thread's prep thread assembles each draw one step ahead; `MetalBackend::DrawAssembled` takes its result in place of `Assemble` (on by default, `XBE_PRE_ASSEMBLE=0` off). The state compare in `render_thread.cpp` is NEON on arm64. Metal skips its 3 KB vertex constant compare when `State::vsc_gen` is unchanged. `msl.cpp` translates upstream's Wine-friendly `ilu_rsq`/`ilu_log` text back to infinities (without it every shader failed and the picture was black). `XBE_CHECK_PRE=1` compares each prep assembly with a second one in Metal's `DrawAssembled`.
 Evidence (muted demos, M4 Pro, race_fps 120, fps_cap 120, perf recorder on, frames with 1500+ draws, warm cache, runs interleaved, two runs each): reflections build 74 and 84 fps / merge with prep thread off 89.7 and 90.2 / prep thread on 99.2 and 99.5. Frames over 12.5 ms 41.7% to 42.0 / 30.7 / 13.7. 1% low 36 / 47.5 / 56.6 fps; p99 27.5 / 21.0 / 17.7 ms. Assemble stage 2.9 / 2.2 / 0.01 ms, state send 4.2 / 1.6 / 1.8 ms, drawing-thread draw time 9.8 to 11.3 / 8.5 / 7.0 ms; GPU 8.1 / 8.1 / 7.6 ms. 40.4 million draws with `XBE_CHECK_PRE=1`: 0 assembled differently; `XBE_CHECK_STATE=1`: 0 stale vertex constant counts (606 draws "state differs", only in one scene, probably the title changing state after the check's copy).

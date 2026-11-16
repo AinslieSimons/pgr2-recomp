@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smoke Lab</title>
+<!--
+  PGR2 tyre smoke lab: the game's wheel smoke (0xF87F0 steering, 0xF8D70 emitting, 0xF8A50 a new particle, 0xF8630 a
+  particle's frame, 0xF8F50 the draw) and the recomp's additions (src/game/smoke.cpp: smoke_duration, smoke_density,
+  smoke_physics's air model, smoke_lighting), run in a browser with a stand-in car, so the smoke can be tuned without the
+  game. The numbers are the same as smoke.cpp's Tune and the file it reads: "Copy smoke_tune.txt" here, save it as
+  smoke_tune.txt in the game's working folder (or point PGR2_SMOKE_TUNE at it), and a running game picks it up within a
+  second. Keep this in step with smoke.cpp.
+  The car: the game's own when local/car.json is there (car_from_scene.py makes it from a frame the game dumps with
+  XBE_TRACE_DUMP; local/ is git-ignored, the model is from your own disc and never committed), boxes otherwise.
+  Not the game's: the smoke texture (a soft puff drawn here; "Load texture" takes an image of your own), the car's textures,
+  the screen-coverage fade (approximated), and rand() (Math.random).
+-->
+<style>
+  :root { --bg: #15171a; --fg: #e6e6e6; --muted: #9aa0a6; --panel: rgba(20,22,25,0.86); --accent: #7fb2ff; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 -apple-system, system-ui, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 12px; top: 12px; background: var(--panel); padding: 8px 10px; border-radius: 6px; max-width: 360px; pointer-events: none; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .row { white-space: nowrap; }
+  #help { position: fixed; left: 12px; bottom: 12px; background: var(--panel); padding: 6px 10px; border-radius: 6px; color: var(--muted); font-size: 12px; }
+  .lil-gui.root { max-height: calc(100vh - 16px); overflow-y: auto; }
+  textarea#io { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 90vw); height: 60vh; display: none;
+    background: #0e0f11; color: var(--fg); border: 1px solid #333; border-radius: 6px; padding: 10px; font: 12px/1.4 ui-monospace, Menlo, monospace; z-index: 10; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="hud"></div>
+<div id="help">Drag to orbit, right-drag to pan, scroll to zoom. Space pauses, S steps one frame, R restarts.</div>
+<textarea id="io" spellcheck="false"></textarea>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+<script src="local/car.js"></script>  <!-- the game's car, when car_from_scene.py has made it (git-ignored) -->
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tuning: smoke.cpp's Tune, the same names and defaults (the game's own numbers where it has them)
+const TUNE_DEFAULTS = {
+  // a new particle (0xF8A50); heavier, thicker smoke than the game's (GAME_PARTICLE below)
+  spawn_size: 0.35, spawn_jitter: 0.15, rise: 1.5, spread: 1.2, drift: 1.0, opacity: 1.3,
+  // its life (0xF8630)
+  hold: 0.7, fade: 0.7, tail: 30.0, growth: 1.6, damping: 2.5, lift: 1.0,
+  // the air (smoke_physics)
+  slip: 0.3, slip_width: 0.8, slip_spread: 1.2, wake_fade: 1.0, wake_life: 2.5, flank: 0.8, vortex_up: 0.3, core: 0.5,
+  nu: 0.08, circulation: 1.2, vortex_length: 2.0, hull_long: 2.2, hull_wide: 0.9, hull_tall: 0.7, body: 1.0,
+  turbulence: 0.4, turbulence_scale: 1.3, ground: 0.05, shade: 0.8,
+  car_height: 0.3, turbulence_floor: 1.0, image_vortices: 1, own_wake: 0,
+  // the look of a plume
+  wake_follow: 12, core_ref_speed: 15, core_min: 0.5,
+  burn_speed: 8, wheel_swirl: 6, wheel_core: 0.2, tyre_radius: 0.33, wheel_width: 0.35,
+  ambient: 25, tread_heat: 150, tread_cool: 0.25, tread_cool_speed: 0.01, smoke_onset: 200, smoke_full: 400, smoke_min: 0.35,
+  burn_arc: 140, burn_eject: 4, burn_spill: 1.2, burn_size: 1.6, burn_opacity: 1.4, burn_rate: 1.5, tyre_width: 0.25,
+  wind: 0.5, wind_gust: 0.4, wind_dir: -1,
+  size_var: 0.45, opacity_var: 0.4, fade_in: 0.15, billow: 2.2, billow_scale: 0.25, billow_grow: 1.5, shade_low: 0.7, shade_height: 2.0,
+};
+const TUNE_HELP = {
+  spawn_size: 'm, a new particle (then / sqrt(density))', spawn_jitter: 'm, +- across and along', rise: 'm/s up, 0 to this',
+  spread: 'm/s, +- across and along', drift: "x the game's drift (half the car's velocity)", opacity: 'x the starting alpha (intensity x 196, at most 255)',
+  hold: 's at full alpha before fading', fade: 'alpha x (1 - fade dt / duration) a frame, down to 60', tail: 'tail steps a second, / duration',
+  growth: 'size += dt x growth / size', damping: "velocity towards the air's, per second", lift: 'm/s buoyant rise, e^(-age)',
+  slip: "x the car's velocity, dragged along", slip_width: 'm, slipstream width as made', slip_spread: 'm/s it widens',
+  wake_fade: 's, e^(-age / this)', wake_life: 's kept (at most 4.2)', flank: 'm out, each trailing vortex', vortex_up: 'm above the car place',
+  core: 'm, vortex core as made', nu: 'm^2/s, core spreading', circulation: "m x the car's speed", vortex_length: 'm along the road per sample',
+  hull_long: 'm half length', hull_wide: 'm half width', hull_tall: 'm half height', body: 'x the flow round the body',
+  turbulence: "x the wake's speed", turbulence_scale: '1/m, eddy wavenumber', ground: 'm it may sink below where made', shade: 'full shade, x the sun',
+  car_height: "m, the car's place above the road", turbulence_floor: 'm over which vertical turbulence grows from the road', image_vortices: '1: each vortex mirrored under the road (the road stops its flow), 0: not',
+  own_wake: 'x the air of the car that made the smoke (0: only other cars stir it)',
+  wake_follow: 'per second added to damping where car air is strong (smoke follows tight vortices)',
+  core_ref_speed: 'm/s up to which a vortex core is its full size', core_min: 'smallest core, x core, as speed rises',
+  burn_speed: "m/s: a smoking wheel is a burnout at a standstill, a skid from this car speed up",
+  wheel_swirl: 'm^2/s circulation round a burning-out tyre\'s axle at full intensity', wheel_core: 'm, its core',
+  tyre_radius: 'm, the axle above the road',
+  ambient: 'degrees C, the air and a cold tyre', tread_heat: 'degrees C a second the tread heats sliding at full intensity',
+  tread_cool: 'per second it cools towards the air, standing', tread_cool_speed: 'more per second for each m/s of the car (airflow)',
+  smoke_onset: 'degrees C the rubber starts to break down into smoke', smoke_full: 'degrees C at which the smoke is full',
+  smoke_min: 'a cold tyre\'s smoke, x full (alpha)',
+  burn_arc: 'degrees of tread, from the road up the back of the tyre, that a burnout puff comes off',
+  burn_eject: 'm/s along the tread a burnout puff leaves at', burn_spill: 'm/s out from the tyre\'s outer face',
+  burn_size: 'x a burnout puff\'s size', burn_opacity: 'x a burnout puff\'s alpha', burn_rate: 'x more puffs a second at full burnout',
+  tyre_width: 'm across the tread the puffs come off', wheel_width: 'm, how far along the axle the swirl reaches (gaussian)',
+  wind: "x the city's average wind (10 m up; 0.5 about street level)", wind_gust: '+- fraction of gusts',
+  wind_dir: 'degrees the wind blows towards, -1 random each race',
+  size_var: '+- fraction of a new puff\'s size', opacity_var: '+- fraction of a new puff\'s alpha', fade_in: 's from clear to full as it leaves the tyre',
+  billow: 'm/s, slow eddies in all smoke, growing with age', billow_scale: '1/m, their wavenumber', billow_grow: 's of age to full billow',
+  shade_low: 'colour at the road, x (1 at shade_height up)', shade_height: 'm over which smoke lightens with height',
+};
+const T = Object.assign({}, TUNE_DEFAULTS);
+// the game's own particle values (0xF8A50, 0xF8630)
+const GAME_PARTICLE = { spawn_size: 0.15, spawn_jitter: 0.15, rise: 4.0, spread: 0.5, drift: 1.0, opacity: 1.0,
+  hold: 0.0, fade: 2.0, tail: 30.0, growth: 1 / 6, damping: 4.0, lift: 0.0 };
+
+// the game settings the lab also plays with (menu options in the game, not in the tuning file)
+const S = {
+  duration: 100,   // smoke_duration, % of the console's
+  density: 300,    // smoke_density, % of the console's 50 a wheel
+  physics: true,   // smoke_physics
+  lighting: true,  // smoke_lighting
+  sun: 1.0,        // the car's sun share (+0x150C): 1 in the sun, 0 in a building's shade
+  colour: '#c8c8c8',  // the wheel's smoke colour (the game: its base colour x the sun's)
+};
+
+// the scene
+const SC = {
+  mode: 'drift circle',  // burnout | race start | drift circle | straight slide | smoke text
+  text: 'GOONS',     // smoke text: what the smoke says (the passing car drives through its middle)
+  text_height: 4,    // smoke text: m tall
+  text_hold: 6,      // smoke text: s the letters hold before they fade
+  launch_accel: 6,   // race start: m/s^2
+  launch_slip: 0.9,  // race start: wheelspin intensity off the line, fading as it goes
+  launch_time: 1.5,  // race start: s the wheelspin lasts
+  start_every: 9,    // race start: s between starts
+  speed: 18,         // m/s
+  slip_angle: 30,    // degrees, heading against the direction of travel
+  radius: 18,        // m, drift circle
+  intensity: 1.0,    // 0.1 to 1 makes smoke (0xF87F0: alpha intensity x 196, stopped below 0.1)
+  wheels: 'rear',    // rear | all
+  passer: true,      // a second car driving through the smoke
+  passer_speed: 25,
+  passer_offset: 0,  // m across from the line through the smoke
+  passer_every: 6,   // s
+  passer_smokes: false,
+  city: 'Chicago',   // whose wind (none in the game; ours, smoke.cpp)
+  fps: 60,           // the frame step (the game's race_fps)
+  time_scale: 1.0,
+  paused: false,
+  follow: true,
+  sort: false,       // draw back to front (the game draws each wheel's list in order)
+  coverage: true,    // the draw's screen-coverage fade (approximate)
+  air: 'off',        // off | ground | cross-section
+  wakes: false,      // show the wake samples and vortex lines
+};
+
+// ---------------------------------------------------------------------------------------------------------------------
+// smoke.cpp's model
+
+const KSAMPLES = 128, SAMPLE_EVERY = 1 / 30, MIN_SPEED = 3, REACH = 4, LIST_CAP = 400;
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const rand = () => Math.floor(Math.random() * 32768);  // the game's rand(): 0 to 32767
+
+const density = () => Math.floor(clamp(S.density, 100, 400) / 100) * 100;
+const sizeScale = () => 1 / Math.sqrt(density() / 100);
+const duration = () => clamp(S.duration, 50, 300) / 100;
+// a full-intensity particle's life in seconds: held, faded from its start to 60, then the tail of 60 steps
+const life = () => T.hold + duration() / Math.max(T.fade, 0.01) * Math.log(Math.max(196 * T.opacity, 61) / 60) + 60 * duration() / Math.max(T.tail, 0.1);
+const CONSOLE_LIFE = 2 / 2 * Math.log(196 / 60) + 2;  // 2.59 s, the console's at Console duration
+// The game makes a particle only to replace one that died (and, below its most, one half the frames), so particles born
+// together die together and the wheel makes smoke in waves, nothing between them. Here a wheel also keeps a steady rate,
+// topping up what the game's replacements leave short each frame, and its most is that rate times the life (and 30%).
+// a wheel's steady rate: the console's average, 50 particles a life of 2.59 s, x the density (particles a second)
+const wheelRate = () => 50 * density() / 100 / CONSOLE_LIFE;
+const wheelMax = () => Math.min(LIST_CAP, Math.round(Math.max(50 * density() / 100, wheelRate() * (1 + T.burn_rate) * life() * 1.3)));
+
+let now = 0;  // g_now
+function makeWake(car) {
+  return { car, s: Array.from({ length: KSAMPLES }, () => ({ at: [0, 0, 0], v: [0, 0, 0], dir: [1, 0, 0], side: [0, 0, 1], speed: 0, born: -1e9 })),
+           head: 0, n: 0, last: -1e9, lo: [0, 0, 0], hi: [0, 0, 0], at: [0, 0, 0], v: [0, 0, 0], speed: 0, moving: false };
+}
+
+// SmokeFrame for one car: its wake sample and bounds
+function wakeFrame(w, at, v) {
+  const speed = Math.hypot(v[0], v[1], v[2]);
+  if (w.n) {
+    const last = w.s[(w.head + KSAMPLES - 1) % KSAMPLES];
+    const r = [at[0] - last.at[0], at[1] - last.at[1], at[2] - last.at[2]];
+    if (dot(r, r) > 900) w.n = 0;
+  }
+  w.at = at.slice(); w.v = v.slice(); w.speed = speed; w.moving = speed >= MIN_SPEED;
+  if (w.moving && now - w.last >= SAMPLE_EVERY) {
+    const sm = w.s[w.head];
+    sm.at = at.slice(); sm.v = v.slice();
+    sm.dir = [v[0] / speed, v[1] / speed, v[2] / speed];
+    let side = cross(sm.dir, [0, 1, 0]);
+    const sl = Math.hypot(side[0], side[1], side[2]);
+    sm.side = sl > 1e-3 ? side.map(c => c / sl) : [0, 0, 0];
+    sm.speed = speed; sm.born = now;
+    w.head = (w.head + 1) % KSAMPLES; w.n = Math.min(w.n + 1, KSAMPLES); w.last = now;
+  }
+  w.lo = at.slice(); w.hi = at.slice();
+  for (let i = 0; i < w.n; i++) {
+    const sm = w.s[(w.head + KSAMPLES - 1 - i) % KSAMPLES];
+    if (now - sm.born > T.wake_life) break;
+    for (let c = 0; c < 3; c++) { w.lo[c] = Math.min(w.lo[c], sm.at[c]); w.hi[c] = Math.max(w.hi[c], sm.at[c]); }
+  }
+}
+
+// Burnouts: a tyre spinning on the spot drags the air round its axle, so its smoke wraps round the wheel and rolls off
+// it in tight swirls; a skid's smoke trails into the car's wake instead. A smoking wheel counts as a burnout by how slow
+// its car is (full at a standstill, none from burn_speed), times its intensity, and makes a Lamb-Oseen vortex about its
+// axle (tyre_radius up, the tyre's top turning forward), with its image under the road and reaching wheel_width along it.
+// Made each frame from the smoking wheels (the game: in 0xF8D70's hook), read by every particle (any car's).
+let wheelVortices = [];  // {c: centre, axis: unit axle (the car's right), gamma, core}
+function wheelVortexAir(p, u) {
+  for (const wv of wheelVortices) {
+    const r = [p[0] - wv.c[0], p[1] - wv.c[1], p[2] - wv.c[2]];
+    const along = dot(r, wv.axis);
+    if (Math.abs(along) > 3 * T.wheel_width) continue;
+    for (let image = 0; image <= 1; image++) {
+      const cy = image ? 2 * wv.road - wv.c[1] : wv.c[1];
+      const q = [p[0] - wv.c[0] - wv.axis[0] * along, p[1] - cy - wv.axis[1] * along, p[2] - wv.c[2] - wv.axis[2] * along];
+      const rr = Math.hypot(q[0], q[1], q[2]);
+      if (rr < 1e-3 || rr > 2.5) continue;
+      const g = (image ? -1 : 1) * wv.gamma;
+      const vt = g / (2 * Math.PI * rr) * (1 - Math.exp(-rr * rr / (wv.core * wv.core))) * Math.exp(-along * along / (T.wheel_width * T.wheel_width));
+      const t = cross(wv.axis, q.map(x => x / rr));  // the axle (the car's right) x out: the top turning forward
+      for (let k = 0; k < 3; k++) u[k] += t[k] * vt;
+    }
+  }
+}
+
+// AirAt: the air's velocity at p
+function airAt(p, wakes, owner) {
+  const u = [0, 0, 0];
+  wheelVortexAir(p, u);
+  let stir = 0, stirRoad = 0;
+  for (const wk of wakes) {
+    if (!wk.n && !wk.moving) continue;
+    const weight = owner !== undefined && wk.car === owner ? T.own_wake : 1;
+    if (weight <= 0) continue;
+    const u0 = u.slice();  // to scale this car's part
+    let inside = true;
+    for (let k = 0; k < 3; k++) inside = inside && p[k] >= wk.lo[k] - REACH && p[k] <= wk.hi[k] + REACH;
+    if (!inside) continue;
+    // round the body, ahead of the rear axle
+    if (wk.moving && wk.speed > MIN_SPEED) {
+      const r = [p[0] - wk.at[0], p[1] - wk.at[1], p[2] - wk.at[2]];
+      const dir = [wk.v[0] / wk.speed, wk.v[1] / wk.speed, wk.v[2] / wk.speed];
+      const along = dot(r, dir);
+      const side = [dir[2], 0, -dir[0]];
+      const sl = Math.hypot(side[0], side[2]);
+      if (sl > 1e-3) { side[0] /= sl; side[2] /= sl; }
+      const across = dot(r, side), up = r[1] - dir[1] * along;
+      const q = [along / T.hull_long, across / T.hull_wide, up / T.hull_tall];
+      const d = Math.hypot(q[0], q[1], q[2]);
+      const behind = clamp(along + 1, 0, 1);
+      if (d > 1 && d < 3 && behind > 0) {
+        const m = [q[0] * T.hull_long, q[1] * T.hull_wide, q[2] * T.hull_tall];
+        const ml = Math.hypot(m[0], m[1], m[2]);
+        const nl = [m[0] / ml, m[1] / ml, m[2] / ml];
+        const n = [nl[0] * dir[0] + nl[1] * side[0], nl[0] * dir[1] + nl[2], nl[0] * dir[2] + nl[1] * side[2]];
+        const f = T.body * behind / (2 * d * d * d), un = dot(wk.v, n);
+        for (let k = 0; k < 3; k++) u[k] += f * (3 * un * n[k] - wk.v[k]);
+      }
+    }
+    // the wake: its nearest sample
+    let best = null, bestD2 = REACH * REACH;
+    for (let i = 0; i < wk.n; i++) {
+      const sm = wk.s[(wk.head + KSAMPLES - 1 - i) % KSAMPLES];
+      if (now - sm.born > T.wake_life) break;
+      const dx = p[0] - sm.at[0], dy = p[1] - sm.at[1], dz = p[2] - sm.at[2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD2) { bestD2 = d2; best = sm; }
+    }
+    if (!best) { for (let k = 0; k < 3; k++) u[k] = u0[k] + (u[k] - u0[k]) * weight; continue; }
+    const sm = best;
+    const age = now - sm.born, fade = Math.exp(-age / T.wake_fade);
+    const width = T.slip_width + T.slip_spread * age, g = Math.exp(-bestD2 / (width * width));
+    for (let k = 0; k < 3; k++) u[k] += sm.v[k] * T.slip * fade * g;
+    // a faster car's vortex is tighter: its core from full size at core_ref_speed down to core_min of it
+    const rc0 = T.core * clamp(T.core_ref_speed / Math.max(sm.speed, 0.1), T.core_min, 1);
+    const rc2 = rc0 * rc0 + 4 * T.nu * age;
+    const road = sm.at[1] - T.car_height;
+    for (let side = -1; side <= 1; side += 2) for (let image = 0; image <= (T.image_vortices ? 1 : 0); image++) {
+      // the vortex, and its image under the road turning the other way (no flow through the road)
+      const cy = sm.at[1] + sm.side[1] * T.flank * side + T.vortex_up;
+      const c = [sm.at[0] + sm.side[0] * T.flank * side, image ? 2 * road - cy : cy, sm.at[2] + sm.side[2] * T.flank * side];
+      const r = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+      const along = dot(r, sm.dir);
+      for (let k = 0; k < 3; k++) r[k] -= sm.dir[k] * along;
+      const rr = Math.hypot(r[0], r[1], r[2]);
+      if (rr < 1e-3) continue;
+      const circulation = (image ? side : -side) * T.circulation * sm.speed * fade;
+      const vt = circulation / (2 * Math.PI * rr) * (1 - Math.exp(-rr * rr / rc2)) * Math.exp(-along * along / (T.vortex_length * T.vortex_length));
+      const n = [r[0] / rr, r[1] / rr, r[2] / rr];
+      const t = cross(sm.dir, n);
+      for (let k = 0; k < 3; k++) u[k] += t[k] * vt;
+    }
+    if (weight * sm.speed * fade * g > stir) { stir = weight * sm.speed * fade * g; stirRoad = road; }
+    for (let k = 0; k < 3; k++) u[k] = u0[k] + (u[k] - u0[k]) * weight;
+  }
+  if (stir > 0.05) {
+    const k = T.turbulence_scale, amp = T.turbulence * stir / k, a = now * 0.7, b = now * 0.9 + 1.7, c = now * 1.1 + 3.1;
+    const x = p[0] * k, y = p[1] * k, z = p[2] * k;
+    const dpz_dy = -Math.sin(x + c) * Math.sin(y), dpy_dz = Math.cos(z + b) * Math.cos(x);
+    const dpx_dz = -Math.sin(y + a) * Math.sin(z), dpz_dx = Math.cos(x + c) * Math.cos(y);
+    const dpy_dx = -Math.sin(z + b) * Math.sin(x), dpx_dy = Math.cos(y + a) * Math.cos(z);
+    u[0] += amp * k * (dpz_dy - dpy_dz);
+    u[1] += amp * k * (dpx_dz - dpz_dx) * clamp((p[1] - stirRoad) / T.turbulence_floor, 0, 1);  // the road damps it
+    u[2] += amp * k * (dpy_dx - dpx_dy);
+  }
+  return u;
+}
+
+// the curl of psi = (sin(ky + a) cos(kz), sin(kz + b) cos(kx), sin(kx + c) cos(ky)) at wavenumber k, phases moving
+// with time: divergence free, so it swirls without bunching (AirAt's turbulence; the billow at another scale)
+function curl(p, k, amp, tt, u, floorScale) {
+  const a = tt * 0.7, b = tt * 0.9 + 1.7, c = tt * 1.1 + 3.1, x = p[0] * k, y = p[1] * k, z = p[2] * k;
+  u[0] += amp * (-Math.sin(x + c) * Math.sin(y) - Math.cos(z + b) * Math.cos(x));
+  u[1] += amp * (-Math.sin(y + a) * Math.sin(z) - Math.cos(x + c) * Math.cos(y)) * floorScale;
+  u[2] += amp * (-Math.sin(z + b) * Math.sin(x) - Math.cos(y + a) * Math.cos(z));
+}
+
+// The wind: the game has none (no wind in its code, Cities.Ini or the areas), so this is ours. Each city's average wind
+// (about 10 m up, from climate records, approximate), times tune.wind (0.5 is about street level), blowing towards
+// wind_dir (random each race when -1), gusting by +- wind_gust in gusts carried down the wind, and weaker near the road
+// ((height / 2 m)^0.3, at least 0.3).
+const CITY_WIND = { Edinburgh: 5.0, Moscow: 3.2, Barcelona: 3.4, 'Washington DC': 4.0, Chicago: 4.6, Florence: 2.2,
+  Stockholm: 3.9, 'Hong Kong': 3.3, Yokohama: 3.8, Sydney: 4.3, Nurburgring: 4.2, None: 0 };
+let raceWindDir = Math.random() * 360;
+function windAt(p, ground) {
+  const U = (CITY_WIND[SC.city] || 0) * T.wind;
+  if (U <= 0) return [0, 0, 0];
+  const dir = (T.wind_dir >= 0 ? T.wind_dir : raceWindDir) * Math.PI / 180;
+  const dx = Math.cos(dir), dz = Math.sin(dir);
+  const tt = now - (p[0] * dx + p[2] * dz) / Math.max(U, 1);  // gusts travel with the wind
+  const gust = 1 + T.wind_gust * (0.6 * Math.sin(0.21 * tt + 1.3) + 0.4 * Math.sin(0.53 * tt + 4.1));
+  const turn = 0.25 * Math.sin(0.13 * tt + 2.2);
+  const h = Math.max(p[1] - ground, 0.01), prof = Math.max(0.3, Math.pow(h / 2, 0.3));
+  const s = U * gust * prof;
+  return [s * Math.cos(dir + turn), 0, s * Math.sin(dir + turn)];
+}
+
+// 0xF8630 as smoke.cpp has it: a particle's frame; false when it has died
+function updateParticle(p, dt, wakes) {
+  let t = dt;
+  const air = S.physics ? airAt([p.x, p.y, p.z], wakes, p.car) : [0, 0, 0];
+  const carAir = Math.hypot(air[0], air[1], air[2]);  // how strongly the cars move the air here
+  if (p.growK !== undefined && carAir > 2) { p.growK = Math.min(1, p.growK + dt * 3); p.billowK = Math.min(1, p.billowK + dt * 3); }  // smoke text: stirred, it billows
+  if (S.physics) { const w = windAt([p.x, p.y, p.z], p.ground); air[0] += w[0]; air[2] += w[2]; }
+  p.x += p.vx * t; p.y += p.vy * t; p.z += p.vz * t;
+  p.age += dt;
+  if (S.physics && p.y < p.ground) { p.y = p.ground; if (p.vy < 0) p.vy = 0; }
+  air[1] += T.lift * Math.exp(-p.age);
+  // the plume's own slow eddies, growing as it ages (entrained air), damped near the road like the wake's turbulence
+  if (T.billow > 0) curl([p.x + p.seed * 7, p.y, p.z], T.billow_scale, T.billow * (p.billowK ?? 1) * Math.min(1, p.age / T.billow_grow), now * 0.35,
+                         air, clamp((p.y - p.ground) / T.turbulence_floor, 0, 1));
+  // towards the air at the damping rate, faster where the cars' air is strong, so smoke follows a tight vortex
+  const damp = Math.max(0, 1 - t * (T.damping + T.wake_follow * Math.min(1, carAir / 5)));
+  p.vx = air[0] + (p.vx - air[0]) * damp;
+  p.vy = air[1] + (p.vy - air[1]) * damp;
+  p.vz = air[2] + (p.vz - air[2]) * damp;
+  const ss = sizeScale();
+  p.size += t * ss * ss * T.growth * (p.growK ?? 1) / p.size;
+  const d = duration();
+  let a = p.a;
+  if (a < 60) {
+    if (T.tail * dt / d > rand() / 32768 && a) a--;
+  } else if (p.age >= (p.hold ?? T.hold)) {
+    const k = Math.max(0, 1 - t * T.fade / d);
+    a = Math.min(Math.floor(Math.max(0, k * a)), 255);
+  }
+  p.a = a;
+  // what is drawn: the alpha faded in as it leaves the tyre and varied per puff, the colour darker near the road
+  p.showA = Math.round(a * Math.min(1, T.fade_in > 0 && !p.burnt ? p.age / T.fade_in : 1) * p.av);
+  const lit = T.shade_low + (1 - T.shade_low) * clamp((p.y - p.ground) / T.shade_height, 0, 1);
+  p.showRgb = [p.rgb[0] * lit, p.rgb[1] * lit, p.rgb[2] * lit];
+  return a > 0;
+}
+
+// 0xF8A50 as smoke.cpp has it: a new particle at `at`, given seconds already lived
+function spawnParticle(p, at, drift, em, lived, wakes) {
+  const pos = at.slice(), vel = drift.map(c => c * T.drift);
+  p.burnt = false;
+  pos[0] += (rand() - 16383) / 16383 * T.spawn_jitter;
+  pos[2] += (rand() - 16383) / 16383 * T.spawn_jitter;
+  vel[1] += rand() / 32767 * T.rise;
+  vel[0] += (rand() - 16383) / 16383 * T.spread;
+  vel[2] += (rand() - 16383) / 16383 * T.spread;
+  p.x = pos[0]; p.y = pos[1]; p.z = pos[2]; p.vx = vel[0]; p.vy = vel[1]; p.vz = vel[2];
+  p.seed = Math.random();
+  p.size = T.spawn_size * sizeScale() * (1 + (Math.random() * 2 - 1) * T.size_var);
+  p.av = clamp(1 + (Math.random() * 2 - 1) * T.opacity_var, 0, 2);
+  p.a = Math.min(Math.round(em.alpha * Math.max(T.opacity, 0) * (em.burnScale ?? 1)), 255);
+  // A burnout's puffs (that share of them) come off the tyre itself: anywhere on its tread from the road up the back
+  // (burn_arc), across its width, leaving along the tread (the tyre's top turning forward, so back along the road and
+  // then up the back of it) and spilling out of its outer face, bigger and denser.
+  const bn = em.burn;
+  if (bn && Math.random() < bn.b) {
+    const th = Math.random() * T.burn_arc * Math.PI / 180, R = T.tyre_radius, w = (Math.random() - 0.5) * T.tyre_width;
+    const c = Math.cos(th), sn = Math.sin(th);
+    for (let k = 0; k < 3; k++) {
+      // from the contact patch (the emitter's place, on the road) round the back of the tyre
+      const at3 = at[k] + bn.up[k] * (R - R * c) - bn.fwd[k] * R * sn + bn.axis[k] * w;
+      const tangent = -bn.fwd[k] * c + bn.up[k] * sn;
+      if (k === 0) p.x = at3; else if (k === 1) p.y = at3; else p.z = at3;
+      const v = tangent * T.burn_eject * bn.b + bn.out[k] * T.burn_spill * (0.5 + Math.random()) + drift[k] * T.drift;
+      if (k === 0) p.vx = v; else if (k === 1) p.vy = v; else p.vz = v;
+    }
+    p.size *= T.burn_size;
+    p.a = Math.min(Math.round(p.a * T.burn_opacity), 255);
+    p.burnt = true;  // no fade-in: it is thick at the tyre
+  }
+  p.rgb = em.rgb.slice();
+  p.ground = at[1] - T.ground; p.age = 0; p.car = em.car;
+  updateParticle(p, lived, wakes);
+}
+
+// a wheel's emitter (0xF87C0 set up with 50 and a delay of 30 frames)
+function makeEmitter() {
+  return { list: [], max: wheelMax(), delay: 30, stopped: true,
+           place: [0, 0, 0], last: [0, 0, 0], drift: [0, 0, 0], alpha: 0, rgb: [1, 1, 1], placed: false };
+}
+
+// 0xF87F0: steered by its wheel each frame
+function steerEmitter(em, wheel, carVel, intensity) {
+  em.last = em.placed ? em.place.slice() : wheel.slice();
+  em.place = wheel.slice(); em.placed = true;
+  em.drift = carVel.map(c => c * 0.5);
+  const i = Math.min(intensity, 1);
+  em.stopped = i < 0.1;
+  em.alpha = i * 196;
+  const c = new THREE.Color(S.colour);
+  const k = S.lighting ? T.shade + (1 - T.shade) * Math.min(S.sun, 1) : 1;
+  em.rgb = [c.r * k, c.g * k, c.b * k];
+}
+
+// 0xF8D70 and smoke.cpp's extra spawns: the emitter's frame
+function emitterFrame(em, dt, wakes) {
+  em.max = wheelMax();
+  if (em.delay > 0) em.delay--;
+  let made = false, madeN = 0;
+  const keep = [];
+  for (const p of em.list) {
+    if (updateParticle(p, dt, wakes)) { keep.push(p); continue; }
+    if (!em.stopped) {
+      const r2 = rand() / 32767;  // between this place and the last
+      const at = [0, 1, 2].map(c => em.place[c] * (1 - r2) + em.last[c] * r2);
+      spawnParticle(p, at, em.drift, em, dt * r2, wakes);
+      keep.push(p); made = true; madeN++;
+    }
+  }
+  em.list = keep;
+  const spawnNew = () => {  // 0xF8D20
+    if (em.delay) return null;
+    const p = {};
+    spawnParticle(p, em.place, em.drift, em, 0, wakes);
+    em.list.push(p);
+    return p;
+  };
+  if (!em.stopped && !made && em.list.length < em.max && rand() < 0x3FFF && spawnNew()) madeN++;
+  // the steady rate: what the game made this frame counts towards it, the rest made between the last place and this
+  if (em.stopped) { em.credit = 0; return; }
+  em.credit = clamp((em.credit || 0) + wheelRate() * (1 + T.burn_rate * (em.burn ? em.burn.b : 0)) * dt - madeN, -3, 3);
+  while (em.credit >= 1 && em.list.length < em.max && !em.delay) {
+    const r = Math.random();
+    const at = [0, 1, 2].map(c => em.place[c] * (1 - r) + em.last[c] * r);
+    const p = {};
+    spawnParticle(p, at, em.drift, em, dt * r, wakes);
+    em.list.push(p);
+    em.credit -= 1;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the stand-in cars
+
+function makeCar(colour) {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.4, metalness: 0.3 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.6, 1.8), paint);
+  body.position.y = 0.55; g.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.5, 1.5), new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 0.2, metalness: 0.5 }));
+  cabin.position.set(-0.3, 1.1, 0); g.add(cabin);
+  const tyre = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+  for (const [x, z] of [[1.3, 0.75], [1.3, -0.75], [-1.3, 0.75], [-1.3, -0.75]]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.25, 16), tyre);
+    w.rotation.x = Math.PI / 2; w.position.set(x, 0.33, z); g.add(w);
+  }
+  return g;
+}
+
+// a car's state: place (on the road), heading, velocity
+function carState(x, z, heading, vx, vz) { return { x, z, heading, v: [vx, 0, vz] }; }
+
+// the smoking car's motion by mode, at time tt
+function smokerAt(tt) {
+  const v = SC.speed, slip = SC.slip_angle * Math.PI / 180;
+  if (SC.mode === 'burnout') return carState(0, 0, 0, 0, 0);
+  if (SC.mode === 'smoke text') return carState(0, -40, 0, 0, 0);  // parked out of the way, not smoking
+  if (SC.mode === 'race start') {
+    // a second on the line, then off with wheelspin fading as it picks up speed, from the line again every start_every
+    const tl = (tt % SC.start_every) - 1, a = SC.launch_accel, vmax = Math.max(SC.speed, 1);
+    if (tl < 0) return carState(0, 0, 0, 0, 0);
+    const tv = vmax / a, x = tl < tv ? 0.5 * a * tl * tl : 0.5 * a * tv * tv + vmax * (tl - tv);
+    return carState(x, 0, 0, Math.min(vmax, a * tl), 0);
+  }
+  if (SC.mode === 'drift circle') {
+    const R = Math.max(SC.radius, 3), th = tt * v / R;
+    const x = R * Math.cos(th), z = R * Math.sin(th);
+    const vx = -v * Math.sin(th), vz = v * Math.cos(th);  // anticlockwise seen from above (+y)
+    const travel = Math.atan2(vz, vx);
+    return carState(x, z, travel + slip, vx, vz);  // nose turned in towards the middle
+  }
+  // straight slide: along +x, back to the start every 160 m
+  const x = ((tt * v) % 160) - 80;
+  return carState(x, 0, slip, v, 0);
+}
+
+// the passing car: along x through the smoke, once every passer_every seconds
+let passerStart = 0;
+function passerAt(tt, smoker) {
+  const span = 120, v = Math.max(SC.passer_speed, 1);
+  const runFor = span / v, cycle = Math.max(SC.passer_every, runFor + 0.5);
+  const k = ((tt - passerStart) % cycle + cycle) % cycle;
+  if (k > runFor) return null;
+  // through the smoke: the burnout's spot, the circle's middle line, or behind the sliding car
+  let cx = 0, cz = 0;
+  if (SC.mode === 'straight slide') cx = smoker.x - 12;
+  const dirx = -1;  // towards -x
+  const x = cx + span / 2 + dirx * v * k, z = cz + SC.passer_offset + (SC.mode === 'drift circle' ? SC.radius : 0);
+  return carState(x, z, Math.PI, dirx * v, 0);
+}
+
+// wheel places on the road, car frame: x forward, z to the left (three.js)
+const WHEELS = [[1.3, 0.75], [1.3, -0.75], [-1.3, 0.75], [-1.3, -0.75]];
+function wheelPlace(car, w) {
+  const c = Math.cos(car.heading), s = Math.sin(car.heading);
+  // three.js y-rotation by heading: forward (1,0,0) -> (cos, 0, -sin); we keep heading as atan2(z, x) so use (cos, sin)
+  const fx = c, fz = s, lx = -s, lz = c;
+  return [car.x + fx * w[0] + lx * w[1], 0, car.z + fz * w[0] + lz * w[1]];
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the scene
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.getElementById('view').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x6f8297);
+scene.fog = new THREE.Fog(0x6f8297, 80, 260);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(-14, 6, 14);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1, 0);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x404040, 0.5));
+const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+sunLight.position.set(-30, 60, 20);
+scene.add(sunLight);
+
+// the road
+{
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.95 }));
+  road.rotation.x = -Math.PI / 2; scene.add(road);
+  const grid = new THREE.GridHelper(400, 100, 0x34363a, 0x2c2e31);
+  grid.position.y = 0.005; scene.add(grid);
+}
+const smokerMesh = makeCar(0x8a8f99), passerMesh = makeCar(0xa23b2a);
+scene.add(smokerMesh, passerMesh);
+
+// The game's own car, when there is one: local/car.json, made by car_from_scene.py from the game's traced scene (its car
+// draws as drawn, x forward, y up, z to the left, wheels on y = 0). Made from your own disc and git-ignored, never shipped.
+// Each draw's colour is its material's (no textures); the passing car gets its body repainted.
+function gameCar(model, paint) {
+  const g = new THREE.Group();
+  let biggest = null;
+  for (const d of model.groups) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(d.positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(d.normals, 3));
+    const c = new THREE.Color(d.colour[0], d.colour[1], d.colour[2]);
+    // without textures the tyres and wheels come out white: low, untextured (white) parts drawn dark
+    let top = -1e9;
+    for (let i = 1; i < d.positions.length; i += 3) top = Math.max(top, d.positions[i]);
+    if (!d.glass && top < 0.72 && d.colour[0] > 0.9 && d.colour[1] > 0.9 && d.colour[2] > 0.9) c.setRGB(0.06, 0.06, 0.065);
+    const mat = d.glass
+      ? new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
+      : new THREE.MeshStandardMaterial({ color: c, roughness: 0.45, metalness: 0.25, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    g.add(mesh);
+    if (!d.glass && (!biggest || d.positions.length > biggest.geometry.attributes.position.array.length)) biggest = mesh;
+  }
+  if (paint !== undefined && biggest) biggest.material.color.set(paint);
+  return g;
+}
+function useCarModel(model) {
+  for (const [mesh, paint] of [[smokerMesh, undefined], [passerMesh, 0x2a5fa2]]) {
+    mesh.clear();
+    mesh.add(gameCar(model, paint));
+  }
+  carModel = model;
+  flash(`Game car: ${model.groups.length} parts, ${model.size[0].toFixed(2)} m long`);
+}
+let carModel = null;
+// local/car.js (loaded above when it is there, from disk or a server), else local/car.json from a server
+setTimeout(() => {
+  if (window.SMOKE_LAB_CAR) useCarModel(window.SMOKE_LAB_CAR);
+  else fetch('local/car.json').then(r => r.ok ? r.json() : null).then(m => m && useCarModel(m)).catch(() => {});
+}, 0);
+
+// the smoke: camera-facing quads, each wheel's list drawn in order (0xF8F50), alpha blended
+function puffTexture() {
+  const n = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = n;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(n, n);
+  // a soft round puff with a little lumpy noise
+  const noise = (x, y) => Math.sin(x * 12.9898 + y * 78.233) * 43758.5453 % 1;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const dx = (x + 0.5) / n * 2 - 1, dy = (y + 0.5) / n * 2 - 1, r = Math.hypot(dx, dy);
+    let a = Math.max(0, 1 - r); a = a * a * (3 - 2 * a);
+    const lump = 0.8 + 0.2 * Math.abs(noise(Math.floor(x / 6), Math.floor(y / 6)));
+    const i = (y * n + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+    img.data[i + 3] = Math.round(255 * a * lump);
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  return tex;
+}
+const MAXQ = 8 * LIST_CAP + 6000;
+const smokeGeo = new THREE.BufferGeometry();
+const qPos = new Float32Array(MAXQ * 4 * 3), qUv = new Float32Array(MAXQ * 4 * 2), qCol = new Float32Array(MAXQ * 4 * 4);
+const qIdx = new Uint32Array(MAXQ * 6);
+for (let q = 0; q < MAXQ; q++) {
+  qUv.set([0, 0, 1, 0, 1, 1, 0, 1], q * 8);
+  qIdx.set([q * 4, q * 4 + 1, q * 4 + 2, q * 4, q * 4 + 2, q * 4 + 3], q * 6);
+}
+smokeGeo.setAttribute('position', new THREE.BufferAttribute(qPos, 3).setUsage(THREE.DynamicDrawUsage));
+smokeGeo.setAttribute('uv', new THREE.BufferAttribute(qUv, 2));
+smokeGeo.setAttribute('colour', new THREE.BufferAttribute(qCol, 4).setUsage(THREE.DynamicDrawUsage));
+smokeGeo.setIndex(new THREE.BufferAttribute(qIdx, 1));
+const smokeMat = new THREE.ShaderMaterial({
+  uniforms: { map: { value: puffTexture() } },
+  vertexShader: 'attribute vec4 colour; varying vec4 vC; varying vec2 vUv; void main(){ vC = colour; vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform sampler2D map; varying vec4 vC; varying vec2 vUv; void main(){ vec4 t = texture2D(map, vUv); gl_FragColor = vec4(vC.rgb * t.rgb, vC.a * t.a); }',
+  transparent: true, depthWrite: false,
+});
+const smokeMesh = new THREE.Mesh(smokeGeo, smokeMat);
+smokeMesh.frustumCulled = false;
+scene.add(smokeMesh);
+
+// debug: wake samples, vortex lines, air arrows
+const dbgGeo = new THREE.BufferGeometry();
+const dbgPos = new Float32Array(60000 * 3), dbgCol = new Float32Array(60000 * 3);
+dbgGeo.setAttribute('position', new THREE.BufferAttribute(dbgPos, 3).setUsage(THREE.DynamicDrawUsage));
+dbgGeo.setAttribute('color', new THREE.BufferAttribute(dbgCol, 3).setUsage(THREE.DynamicDrawUsage));
+const dbgLines = new THREE.LineSegments(dbgGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }));
+dbgLines.frustumCulled = false;
+scene.add(dbgLines);
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the simulation
+
+let simTime = 0, emitters = [], passerEmitters = [], wakes = [], acc = 0;
+function restart() {
+  simTime = 0; now = 0; acc = 0; passerStart = 0; raceWindDir = Math.random() * 360;
+  emitters = WHEELS.map(makeEmitter);
+  passerEmitters = WHEELS.map(makeEmitter);
+  wakes = [makeWake(0), makeWake(1)];
+  emitters.forEach(em => em.car = 0); passerEmitters.forEach(em => em.car = 1);
+  textSmoke = SC.mode === 'smoke text' ? makeTextSmoke(SC.text) : [];
+  // smoke text: the passer reaches the text's middle 3 s in, and comes again every passer_every
+  if (SC.mode === 'smoke text') passerStart = 3 - 60 / Math.max(SC.passer_speed, 1);
+}
+// Smoke text: big billowing puffs filling the letters, standing on the road along x (reading from +z), centred on the
+// passer's line so it drives through the middle of every letter. Each puff holds for text_hold then fades as any does.
+let textSmoke = [];
+function makeTextSmoke(text) {
+  if (!text) return [];
+  const cv = document.createElement('canvas'), g = cv.getContext('2d');
+  const px = 64;  // pixels for the text's height
+  g.font = `900 ${px}px "Arial Black", Impact, sans-serif`;
+  const w = Math.ceil(g.measureText(text).width) + 8;
+  cv.width = w; cv.height = Math.ceil(px * 1.1);
+  g.font = `900 ${px}px "Arial Black", Impact, sans-serif`;
+  g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
+  g.fillText(text, 4, px * 0.95);
+  const img = g.getImageData(0, 0, cv.width, cv.height).data;
+  const m = SC.text_height / px, step = 2, out = [];
+  const rgb = new THREE.Color(S.colour);
+  for (let y = 0; y < cv.height; y += step) for (let x = 0; x < cv.width; x += step) {
+    if (img[(y * cv.width + x) * 4 + 3] < 128) continue;
+    for (let layer = 0; layer < 2; layer++) {  // two deep, for body
+      const p = {
+        x: (x - cv.width / 2) * m + (Math.random() - 0.5) * m * step,  // reads left to right seen from +z
+        y: (cv.height - y) * m * 0.92 + (Math.random() - 0.5) * m * step + 0.2,
+        z: SC.passer_offset + (Math.random() - 0.5) * 0.9,
+        vx: 0, vy: 0, vz: 0,
+        size: (0.16 + Math.random() * 0.1) * SC.text_height / 4, a: 220, seed: Math.random(), av: 0.75 + Math.random() * 0.3,
+        rgb: [rgb.r, rgb.g, rgb.b], ground: 0, age: 0, car: undefined, burnt: true, hold: SC.text_hold, billowK: 0.08, growK: 0.03,
+      };
+      out.push(p);
+    }
+  }
+  return out;
+}
+restart();
+
+function step(dt) {
+  simTime += dt; now += dt;
+  const a = smokerAt(simTime), b = SC.passer ? passerAt(simTime, a) : null;
+  // the wakes (SmokeFrame), before the step as in the game
+  if (S.physics) {
+    wakeFrame(wakes[0], [a.x, T.car_height, a.z], a.v);
+    if (b) wakeFrame(wakes[1], [b.x, T.car_height, b.z], b.v);
+    else { wakes[1].moving = false; wakes[1].n = 0; }
+  } else { for (const w of wakes) { w.n = 0; w.moving = false; } }
+  const active = S.physics ? wakes : [];
+  // the smoking car's wheels: rear, or all
+  wheelVortices = [];
+  // The tread's heat decides how much smoke there is (rubber breaks down into smoke from about 200 to 400 C; tyre wear
+  // studies find sliding, not road speed, drives what comes off): each smoking wheel's tread heats with its intensity
+  // (the game's slip measure) and cools towards the air, faster as the car moves; its smoke goes from smoke_min of full
+  // (a cold tyre) to full between smoke_onset and smoke_full, and a burnout's puffs off the tyre and swirl with it, so a
+  // launch's brief wheelspin stays light, a burnout builds over seconds and a long drift settles in between.
+  const burn = (car, em, intensity) => {  // a burning-out wheel: how much (em.burn, for its puffs) and its vortex
+    const speed = Math.hypot(car.v[0], car.v[2]), slide = em.stopped ? 0 : Math.min(intensity, 1);
+    const b0 = slide * clamp(1 - speed / T.burn_speed, 0, 1);
+    const burning = !em.stopped && b0 > 0.01;
+    if (em.tread === undefined) em.tread = T.ambient;
+    em.tread += dt * (T.tread_heat * slide - (T.tread_cool + T.tread_cool_speed * speed) * (em.tread - T.ambient));
+    const hot = clamp((em.tread - T.smoke_onset) / Math.max(T.smoke_full - T.smoke_onset, 1), 0, 1);
+    em.burnScale = T.smoke_min + (1 - T.smoke_min) * hot;  // the alpha of this wheel's smoke
+    const b = b0 * hot;
+    em.burn = null;
+    if (!burning || b <= 0.01) return;
+    const right = [Math.sin(car.heading), 0, -Math.cos(car.heading)];  // the car's right (forward cos, sin; left -sin, cos)
+    const side = (em.place[0] - car.x) * right[0] + (em.place[2] - car.z) * right[2];
+    em.burn = { b, up: [0, 1, 0], fwd: [Math.cos(car.heading), 0, Math.sin(car.heading)], axis: right, out: right.map(c => c * Math.sign(side || 1)) };
+    if (!S.physics) return;
+    wheelVortices.push({ c: [em.place[0], em.place[1] + T.tyre_radius, em.place[2]], road: em.place[1], axis: right, gamma: T.wheel_swirl * b });
+  };
+  // the smoking wheels' intensity: the scene's, or a race start's wheelspin fading over launch_time from the off
+  let intensity = SC.intensity;
+  if (SC.mode === 'race start') {
+    const tl = (simTime % SC.start_every) - 1;
+    intensity = tl < 0 ? 0 : SC.launch_slip * Math.max(0, 1 - tl / SC.launch_time);
+  }
+  emitters.forEach((em, i) => {
+    const on = SC.wheels === 'all' || i >= 2;
+    steerEmitter(em, wheelPlace(a, WHEELS[i]), a.v, on ? intensity : 0);
+    burn(a, em, on ? intensity : 0);
+  });
+  if (b) passerEmitters.forEach((em, i) => {
+    const on = SC.passer_smokes && i >= 2;
+    steerEmitter(em, wheelPlace(b, WHEELS[i]), b.v, on ? SC.intensity : 0);
+    burn(b, em, on ? SC.intensity : 0);
+  });
+  for (const wv of wheelVortices) wv.core = T.wheel_core;
+  emitters.forEach(em => emitterFrame(em, dt, active));
+  passerEmitters.forEach(em => {
+    if (!b) em.stopped = true, em.burn = null;
+    emitterFrame(em, dt, active);
+  });
+  textSmoke = textSmoke.filter(p => updateParticle(p, dt, active));
+  stats.smoker = a; stats.passer = b;
+}
+const stats = { smoker: null, passer: null, alive: 0, quads: 0, frameMs: 0 };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// drawing
+
+const right = new THREE.Vector3(), up = new THREE.Vector3(), tmp = new THREE.Vector3();
+function drawSmoke() {
+  camera.updateMatrixWorld();
+  right.setFromMatrixColumn(camera.matrixWorld, 0);
+  up.setFromMatrixColumn(camera.matrixWorld, 1);
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const focal = H / 2 / Math.tan(camera.fov * Math.PI / 360);
+  const camPos = camera.position;
+  const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+  let q = 0, alive = 0;
+  const lists = [...emitters, ...passerEmitters].map(em => em.list).concat([textSmoke]);
+  let order = [];
+  for (const list of lists) {
+    alive += list.length;
+    // the draw's fade for a wheel covering much of the screen (approximate: the projected size in pixels)
+    let fadeAll = 1;
+    if (SC.coverage && list !== textSmoke) {  // the draw's fade is per wheel; the text is not one
+      let sum = 0;
+      for (const p of list) {
+        const z = (p.x - camPos.x) * fwd.x + (p.y - camPos.y) * fwd.y + (p.z - camPos.z) * fwd.z;
+        if (z <= 0.1) continue;
+        const s = Math.min(W, 2 * p.size * focal / z);
+        sum += s * s;
+      }
+      if (sum > 0) fadeAll = Math.min(1, 2 * Math.sqrt(W * H / sum));
+    }
+    for (const p of list) order.push([p, fadeAll]);
+  }
+  if (SC.sort) order.sort((A, B) => {
+    const da = (A[0].x - camPos.x) ** 2 + (A[0].y - camPos.y) ** 2 + (A[0].z - camPos.z) ** 2;
+    const db = (B[0].x - camPos.x) ** 2 + (B[0].y - camPos.y) ** 2 + (B[0].z - camPos.z) ** 2;
+    return db - da;
+  });
+  for (const [p, fadeAll] of order) {
+    if (q >= MAXQ) break;
+    const alpha = Math.min(p.showA ?? p.a, 255) / 255 * 0.5 * fadeAll;  // the draw: alpha x fade x 0.5 (0xF6F80), skipped below 0.04
+    if (alpha * 2 <= 0.04) continue;
+    const s = p.size;
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (let c = 0; c < 4; c++) {
+      tmp.set(p.x, p.y, p.z).addScaledVector(right, corners[c][0] * s).addScaledVector(up, corners[c][1] * s);
+      qPos.set([tmp.x, tmp.y, tmp.z], (q * 4 + c) * 3);
+      const rgb = p.showRgb || p.rgb;
+      qCol.set([rgb[0], rgb[1], rgb[2], alpha], (q * 4 + c) * 4);
+    }
+    q++;
+  }
+  smokeGeo.setDrawRange(0, q * 6);
+  smokeGeo.attributes.position.needsUpdate = true;
+  smokeGeo.attributes.colour.needsUpdate = true;
+  stats.alive = alive; stats.quads = q;
+}
+
+function drawDebug() {
+  let n = 0;
+  const line = (a, b, col) => {
+    if (n + 2 > 60000) return;
+    dbgPos.set(a, n * 3); dbgPos.set(b, n * 3 + 3);
+    dbgCol.set(col, n * 3); dbgCol.set(col, n * 3 + 3);
+    n += 2;
+  };
+  const active = S.physics ? wakes : [];
+  if (SC.wakes) {
+    for (const wk of active) for (let i = 0; i < wk.n; i++) {
+      const sm = wk.s[(wk.head + KSAMPLES - 1 - i) % KSAMPLES];
+      if (now - sm.born > T.wake_life) break;
+      const f = Math.exp(-(now - sm.born) / T.wake_fade);
+      for (const side of [-1, 1]) {
+        const c = [sm.at[0] + sm.side[0] * T.flank * side, sm.at[1] + T.vortex_up, sm.at[2] + sm.side[2] * T.flank * side];
+        const L = 0.5 * SAMPLE_EVERY * sm.speed;
+        line([c[0] - sm.dir[0] * L, c[1], c[2] - sm.dir[2] * L], [c[0] + sm.dir[0] * L, c[1], c[2] + sm.dir[2] * L], side < 0 ? [0.3 * f + 0.2, 0.6 * f + 0.2, 1] : [1, 0.5 * f + 0.2, 0.3 * f + 0.2]);
+      }
+    }
+  }
+  if (SC.air !== 'off') {
+    const a = stats.smoker; if (!a) return;
+    const scale = 0.12;
+    const arrow = (p) => {
+      const u = airAt(p, active);
+      const m = Math.hypot(u[0], u[1], u[2]);
+      if (m < 0.2) return;
+      const col = [Math.min(1, m / 10), 0.9 - Math.min(0.7, m / 15), 1 - Math.min(1, m / 10)];
+      line(p, [p[0] + u[0] * scale, p[1] + u[1] * scale, p[2] + u[2] * scale], col);
+    };
+    if (SC.air === 'ground') {
+      const cx = SC.mode === 'drift circle' ? 0 : a.x, cz = 0, R = SC.mode === 'drift circle' ? SC.radius + 8 : 16;
+      for (let x = -R; x <= R; x += 0.8) for (let z = -R; z <= R; z += 0.8) arrow([cx + x, 0.4, cz + z]);
+    } else {
+      // a cross-section across the passer's path (x = the smoke's middle), or behind the smoker
+      const b = stats.passer;
+      const x0 = SC.mode === 'straight slide' ? a.x - 6 : (SC.mode === 'burnout' ? 0 : 0);
+      const zc = b ? b.z : a.z;
+      for (let z = -6; z <= 6; z += 0.35) for (let y = 0.1; y <= 4; y += 0.35) arrow([x0, y, zc + z]);
+    }
+  }
+  dbgGeo.setDrawRange(0, n);
+  dbgGeo.attributes.position.needsUpdate = true;
+  dbgGeo.attributes.color.needsUpdate = true;
+}
+
+function placeCar(mesh, c) {
+  if (!c) { mesh.visible = false; return; }
+  mesh.visible = true;
+  mesh.position.set(c.x, 0, c.z);
+  mesh.rotation.y = -c.heading;  // heading is atan2(z, x); three's y rotation turns +x towards -z
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the panel
+
+const gui = new lil.GUI({ title: 'Smoke Lab' });
+const fScene = gui.addFolder('Car and scene');
+fScene.add(SC, 'mode', ['burnout', 'race start', 'drift circle', 'straight slide', 'smoke text']).name('Mode').onChange(restart);
+fScene.add(SC, 'text').name('Smoke text').onFinishChange(restart);
+fScene.add(SC, 'text_height', 1, 12, 0.5).name('Text height (m)').onFinishChange(restart);
+fScene.add(SC, 'text_hold', 1, 30, 0.5).name('Text holds (s)').onFinishChange(restart);
+fScene.add(SC, 'launch_accel', 1, 15, 0.5).name('Start: accel (m/s2)');
+fScene.add(SC, 'launch_slip', 0, 1, 0.01).name('Start: wheelspin');
+fScene.add(SC, 'launch_time', 0.2, 5, 0.1).name('Start: spin lasts (s)');
+fScene.add(SC, 'start_every', 3, 30, 0.5).name('Start: every (s)');
+fScene.add(SC, 'speed', 0, 60, 0.5).name('Speed (m/s)');
+fScene.add(SC, 'slip_angle', -60, 60, 1).name('Slip angle (deg)');
+fScene.add(SC, 'radius', 5, 50, 0.5).name('Circle radius (m)').onChange(restart);
+fScene.add(SC, 'intensity', 0, 1, 0.01).name('Wheel intensity');
+fScene.add(SC, 'wheels', ['rear', 'all']).name('Smoking wheels');
+fScene.add(SC, 'passer').name('Passing car');
+fScene.add(SC, 'passer_speed', 3, 70, 0.5).name('Passer speed (m/s)');
+fScene.add(SC, 'passer_offset', -8, 8, 0.1).name('Passer offset (m)');
+fScene.add(SC, 'passer_every', 2, 20, 0.5).name('Passer every (s)');
+fScene.add(SC, 'passer_smokes').name('Passer smokes too');
+fScene.add(SC, 'city', Object.keys(CITY_WIND)).name('City (its wind)');
+const fRun = gui.addFolder('Run');
+fRun.add(SC, 'fps', [30, 60, 120]).name('Frame step (fps)');
+fRun.add(SC, 'time_scale', 0.05, 2, 0.05).name('Time scale');
+fRun.add(SC, 'paused').name('Paused').listen();
+fRun.add({ restart }, 'restart').name('Restart (R)');
+fRun.add(SC, 'follow').name('Camera follows');
+const fSet = gui.addFolder('Game settings');
+fSet.add(S, 'duration', 50, 300, 25).name('Tyre Smoke (%)');
+fSet.add(S, 'density', [100, 200, 300, 400]).name('Smoke Particles (%)').onChange(restart);
+fSet.add(S, 'physics').name('Smoke Physics');
+fSet.add(S, 'lighting').name('Smoke Lighting');
+fSet.add(S, 'sun', 0, 1, 0.05).name('Car in sun (0 shade)');
+fSet.addColor(S, 'colour').name('Smoke colour');
+const ranges = {
+  spawn_size: [0.02, 1, 0.01], spawn_jitter: [0, 1, 0.01], rise: [0, 8, 0.1], spread: [0, 3, 0.05], drift: [0, 2, 0.05], opacity: [0, 3, 0.05],
+  hold: [0, 3, 0.05], fade: [0.1, 6, 0.05], tail: [1, 120, 1], growth: [0, 3, 0.01], damping: [0, 20, 0.1], lift: [-2, 3, 0.05],
+  slip: [0, 1, 0.01], slip_width: [0.1, 3, 0.05], slip_spread: [0, 4, 0.05], wake_fade: [0.1, 4, 0.05], wake_life: [0.2, 4.2, 0.1],
+  flank: [0, 1.5, 0.01], vortex_up: [-0.5, 1.5, 0.01], core: [0.05, 1.5, 0.01], nu: [0, 0.5, 0.005], circulation: [0, 4, 0.05],
+  vortex_length: [0.3, 6, 0.1], hull_long: [1, 3.5, 0.05], hull_wide: [0.5, 1.5, 0.05], hull_tall: [0.4, 1.2, 0.05], body: [0, 2, 0.05],
+  turbulence: [0, 2, 0.05], turbulence_scale: [0.2, 4, 0.05], ground: [0, 0.5, 0.01], shade: [0, 1, 0.01],
+  car_height: [0, 1, 0.01], turbulence_floor: [0.05, 3, 0.05], image_vortices: [0, 1, 1], own_wake: [0, 1, 0.05],
+  wake_follow: [0, 30, 0.5], core_ref_speed: [3, 60, 1], core_min: [0.1, 1, 0.01],
+  ambient: [-10, 45, 1], tread_heat: [10, 600, 5], tread_cool: [0.01, 2, 0.01], tread_cool_speed: [0, 0.1, 0.001], smoke_onset: [50, 500, 5], smoke_full: [60, 700, 5], smoke_min: [0, 1, 0.01],
+  burn_arc: [0, 220, 1], burn_eject: [0, 15, 0.1], burn_spill: [0, 5, 0.05], burn_size: [0.3, 4, 0.05], burn_opacity: [0.2, 3, 0.05], burn_rate: [0, 5, 0.05], tyre_width: [0.1, 0.4, 0.01],
+  burn_speed: [0.5, 30, 0.5], wheel_swirl: [0, 20, 0.1], wheel_core: [0.05, 0.6, 0.01], tyre_radius: [0.2, 0.5, 0.01], wheel_width: [0.1, 1.2, 0.01],
+  wind: [0, 2, 0.05], wind_gust: [0, 1, 0.01], wind_dir: [-1, 359, 1],
+  size_var: [0, 0.9, 0.01], opacity_var: [0, 0.9, 0.01], fade_in: [0, 1, 0.01], billow: [0, 4, 0.05], billow_scale: [0.1, 2, 0.01], billow_grow: [0.05, 5, 0.05], shade_low: [0.2, 1, 0.01], shade_height: [0.2, 6, 0.1],
+};
+const groups = {
+  'Particle: spawn': ['spawn_size', 'spawn_jitter', 'rise', 'spread', 'drift', 'opacity'],
+  'Particle: life': ['hold', 'fade', 'tail', 'growth', 'damping', 'lift', 'ground', 'shade'],
+  'Air: wind': ['wind', 'wind_gust', 'wind_dir'],
+  'Tyre heat': ['ambient', 'tread_heat', 'tread_cool', 'tread_cool_speed', 'smoke_onset', 'smoke_full', 'smoke_min'],
+  'Burnout': ['burn_speed', 'burn_arc', 'burn_eject', 'burn_spill', 'burn_size', 'burn_opacity', 'burn_rate', 'tyre_width',
+    'wheel_swirl', 'wheel_core', 'tyre_radius', 'wheel_width'],
+  'Air: wake and vortices': ['own_wake', 'wake_follow', 'core_ref_speed', 'core_min', 'slip', 'slip_width', 'slip_spread', 'wake_fade', 'wake_life', 'flank', 'vortex_up', 'core', 'nu', 'circulation', 'vortex_length'],
+  'Look: plume': ['size_var', 'opacity_var', 'fade_in', 'billow', 'billow_scale', 'billow_grow', 'shade_low', 'shade_height'],
+  'Air: body and turbulence': ['hull_long', 'hull_wide', 'hull_tall', 'body', 'turbulence', 'turbulence_scale', 'turbulence_floor', 'image_vortices', 'car_height'],
+};
+const tuneCtrls = [];
+for (const [title, keys] of Object.entries(groups)) {
+  const f = gui.addFolder(title);
+  f.close();
+  for (const k of keys) {
+    const [lo, hi, st] = ranges[k];
+    const c = f.add(T, k, lo, hi, st).name(k);
+    c.domElement.title = TUNE_HELP[k];
+    tuneCtrls.push(c);
+  }
+}
+const fView = gui.addFolder('Look');
+fView.add(SC, 'sort').name('Sort back to front');
+fView.add(SC, 'coverage').name('Coverage fade');
+fView.add(SC, 'air', ['off', 'ground', 'cross-section']).name('Air arrows');
+fView.add(SC, 'wakes').name('Wake vortices');
+const io = document.getElementById('io');
+const fFile = gui.addFolder('Tuning file');
+function tuneText() {
+  const lines = ['# smoke_tune.txt: PGR2 recomp tyre smoke tuning (src/game/smoke.cpp, tools/smoke-lab)',
+    '# Put it in the game\'s working folder, or set PGR2_SMOKE_TUNE to its path; read again within a second of a change.',
+    `# Tried with Tyre Smoke ${S.duration}%, Smoke Particles ${S.density}% (menu settings, not read from here).`];
+  for (const k of Object.keys(TUNE_DEFAULTS)) {
+    const v = +T[k].toFixed(4);
+    lines.push(`${k} = ${v}${v !== +TUNE_DEFAULTS[k].toFixed(4) ? '' : ''}`.padEnd(28) + `# ${TUNE_HELP[k]}${v !== +TUNE_DEFAULTS[k].toFixed(4) ? ` (default ${+TUNE_DEFAULTS[k].toFixed(4)})` : ''}`);
+  }
+  return lines.join('\n') + '\n';
+}
+function loadTune(text) {
+  Object.assign(T, TUNE_DEFAULTS);
+  for (let line of text.split('\n')) {
+    line = line.replace(/#.*/, '');
+    const m = line.match(/^\s*([a-z_]+)\s*=\s*([-+0-9.eE]+)\s*$/);
+    if (m && m[1] in T && isFinite(+m[2])) T[m[1]] = +m[2];
+  }
+  tuneCtrls.forEach(c => c.updateDisplay());
+}
+const fileActions = {
+  copy() { navigator.clipboard.writeText(tuneText()).then(() => flash('Copied smoke_tune.txt'), () => { io.value = tuneText(); io.style.display = 'block'; io.select(); }); },
+  download() {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([tuneText()], { type: 'text/plain' }));
+    a.download = 'smoke_tune.txt'; a.click();
+  },
+  edit() {
+    if (io.style.display === 'block') { loadTune(io.value); io.style.display = 'none'; flash('Applied'); return; }
+    io.value = tuneText(); io.style.display = 'block'; io.focus();
+  },
+  open() {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.txt,text/plain';
+    inp.onchange = () => inp.files[0] && inp.files[0].text().then(t => { loadTune(t); flash('Loaded ' + inp.files[0].name); });
+    inp.click();
+  },
+  defaults() { loadTune(''); flash("smoke.cpp's defaults"); },
+  game() { Object.assign(T, GAME_PARTICLE); tuneCtrls.forEach(c => c.updateDisplay()); flash("The game's own particle values"); },
+  car() {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+    inp.onchange = () => inp.files[0] && inp.files[0].text().then(t => useCarModel(JSON.parse(t)));
+    inp.click();
+  },
+  texture() {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = () => {
+      if (!inp.files[0]) return;
+      const img = new Image();
+      img.onload = () => { const t = new THREE.Texture(img); t.needsUpdate = true; smokeMat.uniforms.map.value = t; flash('Texture loaded'); };
+      img.src = URL.createObjectURL(inp.files[0]);
+    };
+    inp.click();
+  },
+};
+fFile.add(fileActions, 'copy').name('Copy smoke_tune.txt');
+fFile.add(fileActions, 'download').name('Download smoke_tune.txt');
+fFile.add(fileActions, 'edit').name('Edit as text / apply');
+fFile.add(fileActions, 'open').name('Open a tuning file');
+fFile.add(fileActions, 'defaults').name('Back to defaults');
+fFile.add(fileActions, 'game').name("Game's own particle values");
+fFile.add(fileActions, 'texture').name('Load smoke texture');
+fFile.add(fileActions, 'car').name('Load car model (car.json)');
+let flashText = '', flashUntil = 0;
+function flash(t) { flashText = t; flashUntil = performance.now() + 2500; }
+
+addEventListener('keydown', e => {
+  if (e.target === io) return;
+  if (e.code === 'Space') { SC.paused = !SC.paused; e.preventDefault(); }
+  if (e.code === 'KeyS') { SC.paused = true; step(1 / SC.fps); }
+  if (e.code === 'KeyR') restart();
+});
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the loop: fixed frame steps of 1/fps, as the game's
+
+const hud = document.getElementById('hud');
+let lastT = performance.now(), lastFollow = null;
+function frame(tNow) {
+  const real = Math.min((tNow - lastT) / 1000, 0.1);
+  lastT = tNow;
+  const t0 = performance.now();
+  if (!SC.paused) {
+    acc += real * SC.time_scale;
+    const dt = 1 / SC.fps;
+    let steps = 0;
+    while (acc >= dt && steps < 8) { step(dt); acc -= dt; steps++; }
+    if (steps === 8) acc = 0;
+  }
+  stats.frameMs = stats.frameMs * 0.9 + (performance.now() - t0) * 0.1;
+  const a = stats.smoker || smokerAt(0);
+  placeCar(smokerMesh, SC.mode === 'smoke text' ? null : a);
+  placeCar(passerMesh, stats.passer);
+  if (SC.follow) {
+    const target = new THREE.Vector3(SC.mode === 'drift circle' ? 0 : a.x, 1, SC.mode === 'drift circle' ? 0 : a.z);
+    if (lastFollow) camera.position.add(target.clone().sub(lastFollow));
+    controls.target.copy(target);
+    lastFollow = target;
+  } else lastFollow = null;
+  controls.update();
+  drawSmoke();
+  drawDebug();
+  renderer.render(scene, camera);
+  const d = density() / 100;
+  hud.innerHTML =
+    `<div class="row"><b>${stats.alive}</b> particles (${stats.quads} drawn), up to <b>${wheelMax()}</b> a wheel at ${(T.spawn_size * sizeScale()).toFixed(3)} m</div>` +
+    `<div class="row">duration x${duration().toFixed(2)}: full alpha to 60 in ~${(T.hold + duration() / T.fade * Math.log(196 * T.opacity / 60)).toFixed(2)} s, tail ~${(60 * duration() / T.tail).toFixed(2)} s</div>` +
+    `<div class="row">rear tyres ${emitters.slice(2).map(e => Math.round(e.tread ?? T.ambient)).join(' / ')} C, smoke x${(emitters[3].burnScale ?? 1).toFixed(2)}</div>` +
+    `<div class="row">t ${simTime.toFixed(1)} s, sim ${stats.frameMs.toFixed(1)} ms a frame${SC.paused ? ', <b>paused</b>' : ''}</div>` +
+    (performance.now() < flashUntil ? `<div class="row"><b>${flashText}</b></div>` : '');
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
