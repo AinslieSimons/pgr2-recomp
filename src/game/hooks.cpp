@@ -762,6 +762,7 @@ X86_FUNC(sub_000314E0) {
 
 namespace pgr2 {
 void WaterBeforeView(X86Context& ctx);  // src/game/planar_water.cpp
+void PoolView(X86Context& ctx);         // src/game/pool_view.cpp
 }
 // the race view's drawing (0x17FCC0, ecx the view, [4] its camera): flares and other effects are skipped when the
 // camera's mode +0x128 is 12 and 0x291A27 is not -1. PGR2_FLARE_LOG=1 logs those when they change
@@ -840,4 +841,13 @@ X86_FUNC(sub_001388F0) {
     LOGE("pgr2: fatal error \"%s\" from %08X", msg.c_str(), kernel::R32(ctx.esp));
     logx::Flush();
     __imp__sub_001388F0(ctx, base);
+}
+
+// the end of a frame (0x178300, thiscall, before its Swap): PGR2_POOL_VIEW=1 draws the light pool over it (src/game/pool_view.cpp)
+X86_EXTERN_FUNC(__imp__sub_00178300);
+X86_FUNC(sub_00178300) {
+    const uint32_t ecx = ctx.ecx;
+    pgr2::PoolView(ctx);
+    ctx.ecx = ecx;
+    __imp__sub_00178300(ctx, base);
 }

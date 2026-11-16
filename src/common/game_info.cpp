@@ -11,7 +11,7 @@
 void InstallDrawFilter();  // src/game/draw_filter.cpp
 
 namespace pgr2 {
-extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3, smoke_physics, smoke_lighting;
+extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, headlight_shadows, menus_4x3, smoke_physics, smoke_lighting;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
@@ -87,6 +87,7 @@ void Init() {
 namespace pgr2 {
 uint32_t race_fps = 30;  // the frame rate of races, 30 as on the console (src/game/hooks.cpp)
 bool cpu_car_shadows = true;  // every car with the followed car's sun shadow (src/game/car_shadows.cpp)
+bool headlight_shadows = true;  // cars shadow the headlight beams on the road at night (src/game/headlight_shadows.cpp)
 bool menus_4x3 = true;   // the menus at 4:3 with bars each side on a widescreen frame (src/game/hooks.cpp)
 bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
@@ -135,6 +136,8 @@ const app::GameInfo app::kGame = {
     // game settings kept in the settings file
     .options = {{"skip_intro", &pgr2::skip_intro, nullptr, "Skip intro movies", "At the next start."},
                 {"cpu_car_shadows", &pgr2::cpu_car_shadows, nullptr, "Sun shadows on every car", "Not on the console, where only the followed car has one; at once."},
+                {"headlight_shadows", &pgr2::headlight_shadows, nullptr, "Headlight shadows",
+                 "At night a car in another car's headlight beam casts a shadow in it on the road. Not on the console; at once."},
                 {"menus_4x3", &pgr2::menus_4x3, nullptr, "Menus at 4:3",
                  "On by default: the menus, laid out for 4:3, keep their shape with bars each side on a wide screen; races stay wide. Off, they stretch as on a console set to widescreen; at once."},
                 {"hide_hud", &pgr2::hide_hud, nullptr, "Hide the race HUD", "For screenshots and replays; at once."},

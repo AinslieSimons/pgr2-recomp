@@ -37,6 +37,24 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-16 - headlight shadows in the light pool; pool debug view (branch headlight-shadows)
+
+- `src/game/headlight_shadows.cpp`, setting `headlight_shadows` (F1, on): at night, cars inside the followed car's headlight
+  beam cut their shadow out of it. The beam is one triangle strip per car in the light pool's alpha (0x32850 -> 0x1F2A0 ->
+  0x1D4A0, blend ONE ONE, car space y -0.3, forward -z, 12.7 m long). Its vertex calls are caught (0x1C0C50, 0x1C0C10,
+  0x1C0CF0), each occluder's footprint (+0x44, rows +0x14/+0x34, 0.9 x +0xA8 / +0xAC) is pushed away from a lamp into a
+  hull, the hulls are subtracted from the strip on the CPU, and the rest is drawn as a triangle list with the game's own
+  state and matrix, once per lamp (front corners) at half strength: a soft edge. No stencil: the pool's depth is LIN_D16.
+- `src/game/pool_view.cpp` + hook on 0x178300: `PGR2_POOL_VIEW=1` draws the pool's alpha and colour top left.
+- Evidence (Metal, muted night demos, `PGR2_NIGHT=1`): all five play to the end, no traps; cars are in the beam at
+  22-50 s and 221-240 s; the cut takes 15-25% of the beam's area then (`PGR2_HL_LOG=1`: e.g. 21 of 141 m2) and shows in the
+  pool view's alpha. Unbinding the pool from the road removes the light around the car (beside it 113 to 51 of 255), and
+  removing the beam strip removes the beam ahead (79 to 45), so the road's headlight light is this strip.
+- Limits: only the followed car's beam is in the pool (no other car's was drawn in any demo); a shadow lies behind its car
+  as the lamp sees it, which a chase camera mostly sees the car itself cover; the pool is 256x256.
+- Not done: Windows (D3D11/12) build, an in-race (non-demo) night check, a fade along the shadow, `scripts/smoke.sh`
+  (headless Linux harness, not on this Mac).
+
 ### 2026-11-15 - demos and replays keep fixed game time above 30
 - Races above 30 take game time from the clock (0x2919AD, since 2026-11-01), so a late frame takes more physics steps.
   Replays and demos are their inputs simulated again: with the clock's uneven steps the cars left the recorded line

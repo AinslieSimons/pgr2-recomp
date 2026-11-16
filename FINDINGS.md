@@ -165,6 +165,20 @@ Each item is marked:
 
 Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11-05) unless marked as read from the code or data.
 
+- **[PGR2] The light pool at night** (2026-11-16). 0x180230 (camera kind 3) draws, into target `0x48639C` (LIN_A8R8G8B8
+  256x256, depth LIN_D16 from 0x178780: no stencil): the world, the cars and the light pass 0x42CE0 with colour writes RGB,
+  then the followed car's headlight beam with alpha only (0x32850 -> 0x1F2A0 -> 0x1D4A0: one triangle strip in car space,
+  y -0.3, forward -z, from z -(ac/2 - 0.2), half width +0xA8/2, to 12.7 m further, half width 10; blend ONE ONE). The
+  road reads it in stage 3 (B1001F40: `t3 = lerp(c0, t3, v1.a)`, then `t3 * t0.a` added to the lit base). Measured,
+  unbinding it takes all the light around the car; the strip is the beam ahead. A test that skips 0x180230 misleads: the
+  road then samples a stale copy of the texture and stays lit. Car fields: +0xA4 radius, +0xA8 width, +0xAC length;
+  `car+0xB68` lamps hold their place on screen for the camera being drawn, not in the car. `0x3CD804` keeps pointing at
+  the pool's camera after the pass. `src/game/headlight_shadows.cpp` cuts cars' shadows out of the strip.
+- **[PC] Drawing from a hook** (2026-11-16). Begin/End vertices are inline commands the runtime reads at the next HLE call:
+  Swap reads them after moving to the next back buffer, which is then cleared, so end with an HLE call. On Metal a draw
+  reading a colour target in stage 0 into another target becomes a full screen depth copy (MetalBackend::DepthCopy) and
+  the draw itself is dropped: read such a texture in stage 1 or above. A pretransformed vertex at z 0 sits on the near
+  clip plane.
 - **[PGR2] Camera kinds** (`+0x40`): 0 main, 1 mirror, 2 reflection cube, 3 the camera of target `0x48639C` (0x180230, built by 0x1848D0), which stands at y -10000 until it follows the car and looks like the light pool's; the game has no planar reflection pass (2026-11-06, read from the code). Measured main: far 3000, object range
   x1, width 640, scale 1.06. Mirror: far 500, range x0.3, width 200, scale 1.13, view mode 4 only. Cube: far 30, range x0.1, 256 wide.
   The draw distance option does not change the mirror's far plane (0x291A08) or any object range.
@@ -186,7 +200,7 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   A block's +0x10 and +0x14 are only written by 0x1072D0; blocks from 0x107260 keep the last city's, so flag 0x80 alone does not mean a stream part. A full version not asked for in a frame goes to its small header at once (0x100C00 at age 1 swaps +0 and +4), even while still held, and leaves after 20 frames. The cache has 250 slots. `src/game/full_textures.cpp` holds them all outside the cache.
 - **[PGR2] Trees** take detail from size on screen (0x49780, pixels), not from a level per tree: 0x49F30 draws size x 0.0025 (at most 1) of the mesh's leaf points, limited by the range +0x12 and 300 (0x49B40, the game's only point list call), with a fuller shader past 0.5, and nothing below the int 0x2DF470. 0x49E70 picks one of 6 mesh levels from the table 0x2DF324..0x2DF374, largest first. `src/game/detail.cpp` reports a larger size.
 - **[PGR2] Hood and bumper views** (0x179E90 false, view mode 4): 0x1D0C0 clears the shadow map (0x188C20) for the car it sits on instead of drawing it; the mesh pass 0x21920 still runs.
-- **[PGR2] Reflections** (2026-11-06, harness draw lists with each shader's texture modes, Yokohama, Sydney, Chicago; stage 3 is sampled when its mode is not 0, stale bindings otherwise fill the list): the followed car's paint and glass sample the live 256x256 R5G6B5 cube; other 512x512 car textures sample a 256x256 DXT1 cube, read as each city's `FixedCubeMap` (the disc has it in all but the garage), as do world objects with a stage 3 reflection, scaled by the texture's alpha. Modes (1, 17, 17, 12) are bump-mapped reflection on the same cube, about 1300 to 2500 vertices a frame. Water is the level use of modes (1, 17, 17, 12), shader B0001C51/B0001FA0 in the runs measured: y -0.177 in Sydney (city 9), 2.0 in city 7, -5.497 in city 4, -4.790 in the smoke test's race; the same modes also draw things that are not level, so the filter tests the vertices. Not reflection: stage 3's 256x256 L8 target is the light pool; a 128x128 L8 and a 128x128 R5G6B5 are unidentified.
+- **[PGR2] Reflections** (2026-11-06, harness draw lists with each shader's texture modes, Yokohama, Sydney, Chicago; stage 3 is sampled when its mode is not 0, stale bindings otherwise fill the list): the followed car's paint and glass sample the live 256x256 R5G6B5 cube; other 512x512 car textures sample a 256x256 DXT1 cube, read as each city's `FixedCubeMap` (the disc has it in all but the garage), as do world objects with a stage 3 reflection, scaled by the texture's alpha. Modes (1, 17, 17, 12) are bump-mapped reflection on the same cube, about 1300 to 2500 vertices a frame. Water is the level use of modes (1, 17, 17, 12), shader B0001C51/B0001FA0 in the runs measured: y -0.177 in Sydney (city 9), 2.0 in city 7, -5.497 in city 4, -4.790 in the smoke test's race; the same modes also draw things that are not level, so the filter tests the vertices. Not reflection: stage 3's 256x256 L8 target is the light pool (by day; at night it is LIN_A8R8G8B8 with a LIN_D16 depth, see "The light pool at night"); a 128x128 L8 and a 128x128 R5G6B5 are unidentified.
 - **[PGR2] Which cube each car reads** (2026-11-07, per draw: stage 3's texture and kRsPsTextureModes). The followed car's
   draws bind the live cube (D3DFMT 5, R5G6B5 swizzled; 128x128 as the game describes it); every other car binds the
   city's FixedCubeMap (DXT1, 256x256), as do world objects. Car draws are told by their texture modes: paint 0x8401 (other
