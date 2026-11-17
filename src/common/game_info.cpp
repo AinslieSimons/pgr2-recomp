@@ -91,7 +91,7 @@ uint32_t race_fps = 30;  // the frame rate of races, 30 as on the console (src/g
 bool cpu_car_shadows = true;  // every car with the followed car's sun shadow (src/game/car_shadows.cpp)
 bool headlight_shadows = true;  // cars shadow the headlight beams on the road at night (src/game/headlight_shadows.cpp)
 uint32_t street_light_reach = 200;  // street lights' shadow reach, percent of each light's radius (src/game/night_shadows.cpp)
-uint32_t street_light_shadows = 4;  // the street lights' car shadows: 0 as the console, 1 soft, 2 soft and from the lamp, 3 shadow maps, 4 kept shadow maps (src/game/night_shadows.cpp)
+uint32_t street_light_shadows = 3;  // the street lights' car shadows: 0 as the console, 1 soft, 2 soft and from the lamp, 3 shadow maps (default), 4 kept shadow maps (src/game/night_shadows.cpp)
 bool menus_4x3 = true;   // the menus at 4:3 with bars each side on a widescreen frame (src/game/hooks.cpp)
 bool skip_intro = false;  // no intro movies at start (src/game/hooks.cpp)
 bool hide_hud = false;    // no race HUD, for screenshots (src/game/hooks.cpp)
@@ -182,7 +182,7 @@ const app::GameInfo app::kGame = {
                 {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
                  "1 (every frame) by default, up to 8: a higher number costs less frame rate, the cars' reflections update less often; at once."},
                 {"street_light_shadows", nullptr, &pgr2::street_light_shadows, "Street light shadows (0-4)",
-                 "At night: 0 as the console (hard edged), 1 soft edged, 2 soft and cast from the lamp, 3 the day's shadow map from each lamp: the car's true shape, costs frame rate; 4 (default) the same from maps kept per car and direction, cheaper; at once."},
+                 "At night: 0 as the console (hard edged), 1 soft edged, 2 soft and cast from the lamp, 3 (default) the day's shadow map from each lamp: the car's true shape, costs frame rate; 4 the same from maps kept per car and direction, cheaper, less exact; at once."},
                 {"street_light_reach", nullptr, &pgr2::street_light_reach, "Street light shadow reach (%)",
                  "200 by default (100 the console's): each street light's radius for its car shadows, 50 to 400; more lights cast, and farther; at once."},
                 {"baked_ao", nullptr, &pgr2::baked_ao, "Baked ambient occlusion (%)",

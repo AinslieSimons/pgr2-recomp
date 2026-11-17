@@ -204,7 +204,7 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Every Car"}; },
      [] { return uint32_t(cpu_car_shadows); },
      [](uint32_t i) { cpu_car_shadows = i != 0; }},
-    {u"Street Light Shadows", u"At night: Shadow Map gives the car's true shape from each lamp (costs frame rate); Cached Maps, the default, keeps each car's maps: cheaper.",
+    {u"Street Light Shadows", u"At night: Shadow Map gives the car's true shape from each lamp (costs frame rate); Cached Maps keeps each car's maps: cheaper, less exact.",
      [] { return Choices{u"Console", u"Soft", u"From Lamp", u"Shadow Map", u"Cached Maps"}; },
      [] { return std::min<uint32_t>(street_light_shadows, 4); },
      [](uint32_t i) { street_light_shadows = i; }},
