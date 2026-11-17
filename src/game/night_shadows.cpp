@@ -19,7 +19,10 @@
 // Cost: one depth map and mesh per car per light, 300 to 800 a second in a race: a frame rate dip. Mode 3 also leaves the last
 // lamp's map where the game's car shading reads the sun's (the followed car's windows go dark).
 // 4 (default) as 3 with each car's maps kept, one per direction from the car (below): about 6 map draws a frame instead of 660, the
-// street-light pass 1.2 ms instead of 2.0 and the frame's work 12% less (a recorded race, tools/perf/shadow_report.py).
+// street-light pass 1.5 ms instead of 2.0 (a recorded race, tools/perf/shadow_report.py). The views either side of a lamp's way
+// are cross-faded: a lamp's shadow switched view about 4 times a second, and its outline and length jumped (the abrupt changes
+// against mode 3 halved, frame by frame on a recorded stretch; mode 3 and 4 on alternate frames, PGR2_TILE_ALTERNATE, compares
+// them at the same moments in one run).
 // Each matrix is built as the XDK's D3DXMatrixShadow builds it (its sign is the opposite of the D3DX documentation's) and scaled to
 // end with the w the game's own ends with (0x30AE0 divides the game's by d): the draw is W-buffered, so w is its depth, and a
 // different w put the shadow behind the road or behind the camera. With one sample, no radius and mode 1 the matrix equals the
@@ -29,6 +32,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -91,6 +95,7 @@ constexpr uint32_t kDrawMap = 0x1892E0;          // thiscall (car, map scale 1.0
 constexpr uint32_t kGroundMesh = 0x21920;        // thiscall on the car
 constexpr uint32_t kCarAmbient = 0x1510;         // r g b a: the car's ambient, the shade's base (0x21920: base / (base + sun))
 constexpr uint32_t kCarFromPointer = 0x474C;     // 0x32D10's per car pointer (ebx at the draw) is the car + this
+constexpr uint32_t kFirstCar = 0x298F90;          // the race's first car (0x297390 + 0x1C00), testing
 constexpr uint32_t kCarRoof = 0xB0;             // the car's height (metres)
 constexpr float kMinHeight = 3.0f;               // a lamp nearer the road plane than this is treated as this high (no endless shadows)
 
@@ -149,9 +154,10 @@ void Multiply(const Matrix a, const Matrix b, Matrix out) {
 // c[0x8F]: M = view^-1 x light view x projection x bias, transposed by 0x19440D, where the hook keeps it. Kept relative to the car,
 // K = car x view x M (the car's world and the camera's view as the map was drawn), a later frame's matrix is
 // view_now^-1 x car_now^-1 x K, uploaded before the ground mesh (0x21920) is drawn with the tile's texture bound in the map's place.
-// Views: 16 azimuths x 5 elevations + straight down; the nearest is used, sheared to the lamp's own direction (ShearToward). A tile
+// Views: 16 azimuths x 10 elevations + straight down; those either side of the lamp's way cross-faded (ChooseViews), each sheared
+// to the lamp's own direction (ShearToward). A tile
 // is drawn when first wanted (at most 4 a frame, PGR2_TILE_BUDGET; until then the car's nearest tile within two views stands in) and again after
-// 20 s; the slots (about 190 of 512x512) go least recently used first. The ground mesh draws with the states 0x1892E0 leaves (cull
+// 20 s; the slots (about 750 of 256x256, the car filling each) go least recently used first. The ground mesh draws with the states 0x1892E0 leaves (cull
 // 0x900, Z as W) and the camera's transforms, else nothing shows; its stage 0 filtered, for 2x2 comparisons (softer edges).
 constexpr uint32_t kMapSurface = 0x486190;       // the map's depth surface, as 0x1892E0 sets it as the render target
 constexpr uint32_t kMapColour = 0x486198;        // its colour surface (no data)
@@ -175,7 +181,8 @@ constexpr uint32_t kCarWorld = 0x18;             // the car's vtable: thiscall, 
 constexpr uint32_t kFormatDepth = 0x30, kFormatColour = 0x11;  // LIN_D16 (as the map's texture), the map's colour surface
 constexpr uint32_t kTileArena = 0x72000000, kTileArenaBytes = 0x0C000000;  // past planar_water.cpp's
 constexpr int kAzimuths = 16;
-constexpr float kElevations[] = {6, 18, 32, 50, 70};  // degrees below the car's level, the way the light travels
+// degrees below the car's level, the way the light travels: close where a shadow's length (height / tan) changes fastest
+constexpr float kElevations[] = {4, 7, 10, 14, 19, 25, 32, 41, 52, 66};
 constexpr int kElevationCount = int(sizeof(kElevations) / sizeof(kElevations[0]));
 constexpr int kViews = kAzimuths * kElevationCount + 1;  // and straight down
 
@@ -191,7 +198,7 @@ std::vector<Tile> g_tiles;
 uint32_t g_tile_size = 0, g_tile_bytes = 0, g_frame = 0, g_made_this_frame = 0;
 bool g_tiles_failed = false, g_capture = false, g_captured = false;
 Matrix g_captured_m;
-uint32_t g_tiles_made = 0, g_tiles_reused = 0, g_tiles_missing = 0;  // testing (PGR2_HL_LOG)
+uint32_t g_tiles_made = 0, g_tiles_reused = 0, g_tiles_missing = 0, g_tiles_faded = 0;  // testing (PGR2_HL_LOG)
 uint32_t g_upload = 0;  // guest memory for the uploaded matrix
 
 // the view's direction in the car's space: the way the light travels, y down
@@ -214,6 +221,48 @@ int NearestView(const float dir[3]) {
         if (dot > best_dot) best_dot = dot, best = v;
     }
     return best;
+}
+
+// the views for a light's way (in the car's space) and each one's share of the shadow: the elevation bands and azimuths either side
+// of it, cross-faded over the middle kFade of the step between them (PGR2_TILE_FADE, 0 the nearest alone), so that a lamp's shadow
+// passes from one view's outline to the next rather than switching. Up to 4 near a corner of the grid, 1 most of the time.
+struct Pick {
+    int view;
+    float share;
+};
+int ChooseViews(const float dir[3], Pick out[4]) {
+    static const float fade = std::getenv("PGR2_TILE_FADE") ? float(std::atof(std::getenv("PGR2_TILE_FADE"))) : 0.15f;
+    auto blend = [](float t) {  // the far side's share at t (0 .. 1) across a step
+        if (fade <= 0) return t < 0.5f ? 0.0f : 1.0f;
+        return std::clamp((t - 0.5f) / fade + 0.5f, 0.0f, 1.0f);
+    };
+    const float horizontal = std::sqrt(dir[0] * dir[0] + dir[2] * dir[2]);
+    const float el = std::atan2(-dir[1], horizontal) * 57.29578f;
+    // the bands and straight down as one more at 90 degrees
+    auto band_at = [](int b) { return b < kElevationCount ? kElevations[b] : 90.0f; };
+    int band = 0;
+    while (band + 1 <= kElevationCount && band_at(band + 1) <= el) band++;
+    const float upper = band < kElevationCount ? blend((std::max(el, band_at(0)) - band_at(band)) / (band_at(band + 1) - band_at(band))) : 0.0f;
+    float az = std::atan2(dir[2], dir[0]) * 57.29578f;
+    if (az < 0) az += 360.0f;
+    const float at = az * kAzimuths / 360.0f, frac = at - std::floor(at), next = blend(frac);
+    const int a0 = int(std::floor(at)) % kAzimuths, a1 = (a0 + 1) % kAzimuths;
+    auto view_of = [](int b, int a) { return b >= kElevationCount ? kViews - 1 : b * kAzimuths + a; };
+    const Pick all[4] = {{view_of(band, a0), (1 - upper) * (1 - next)}, {view_of(band, a1), (1 - upper) * next},
+                         {view_of(band + 1, a0), upper * (1 - next)}, {view_of(band + 1, a1), upper * next}};
+    int n = 0;
+    float total = 0;
+    for (const Pick& p : all) {
+        if (p.share < 0.03f) continue;
+        bool merged = false;
+        for (int k = 0; k < n; k++)
+            if (out[k].view == p.view) out[k].share += p.share, merged = true;
+        if (!merged) out[n++] = p;
+        total += p.share;
+    }
+    for (int k = 0; k < n; k++) out[k].share /= total;
+    std::sort(out, out + n, [](const Pick& a, const Pick& b) { return a.share > b.share; });
+    return n;
 }
 
 bool Invert(const Matrix m, Matrix out) {
@@ -254,7 +303,7 @@ bool EnsureTiles(X86Context& ctx) {
     if (!g_tiles.empty()) return true;
     if (g_tiles_failed) return false;
     g_tiles_failed = true;
-    static const uint32_t want = std::getenv("PGR2_TILE") ? uint32_t(std::atoi(std::getenv("PGR2_TILE"))) : 512;
+    static const uint32_t want = std::getenv("PGR2_TILE") ? uint32_t(std::atoi(std::getenv("PGR2_TILE"))) : 256;
     const uint32_t size = R32(kMapSize);
     if (!size) return false;
     g_tile_size = std::clamp<uint32_t>(want, (size + 3) / 4, size);  // 0x1892E0 keeps its scale at least 0.25
@@ -297,13 +346,20 @@ bool MakeTile(X86Context& ctx, Tile& t, uint32_t car, int view) {
     const uint32_t surface = R32(kMapSurface), colour = R32(kMapColour);
     kernel::W32(kMapSurface, t.surface);
     kernel::W32(kMapColour, t.colour);
-    const float scale = float(g_tile_size) / float(R32(kMapSize));
+    // 0x1892E0 draws a viewport of the map's size x the scale, but widens its view by 1 / scale too (0x1898EC), so a smaller
+    // scale leaves the car in the middle of the viewport: the map's size is made the tile's for the draw, at scale 1, and the car
+    // fills the tile (4x the texels of a 512 tile at scale 0.5)
+    static const bool fill = !std::getenv("PGR2_TILE_SCALED");  // testing: the old way
+    const uint32_t map_size = R32(kMapSize);
+    const float scale = fill ? 1.0f : float(g_tile_size) / float(map_size);
+    if (fill) kernel::W32(kMapSize, g_tile_size);
     uint32_t scale_bits;
     std::memcpy(&scale_bits, &scale, 4);
     g_capture = true, g_captured = false;
     g_in_map = true;
     ctx.ecx = kShadowObject;
     kernel::CallGuest(ctx, kDrawMap, {car, scale_bits});
+    kernel::W32(kMapSize, map_size);
     g_in_map = false;
     g_capture = false;
     kernel::W32(kMapSurface, surface);
@@ -318,15 +374,12 @@ bool MakeTile(X86Context& ctx, Tile& t, uint32_t car, int view) {
     return true;
 }
 
-// the tile to use for this car and direction (the light's way, in the car's space): made now if the frame's budget allows, else
-// the nearest the car has
-Tile* FindTile(X86Context& ctx, uint32_t car, const float local[3]) {
+// the car's tile for a view: made now if the frame's budget allows, else the car's nearest to the light's way (local, in the car's
+// space) within about two views
+Tile* FindTile(X86Context& ctx, uint32_t car, const float local[3], int view) {
     static const uint32_t budget = std::getenv("PGR2_TILE_BUDGET") ? uint32_t(std::atoi(std::getenv("PGR2_TILE_BUDGET"))) : 4;
     // a tile is drawn again after this many frames (the car's damage; a target lost); testing: PGR2_TILE_REFRESH
     static const uint32_t refresh = std::getenv("PGR2_TILE_REFRESH") ? uint32_t(std::atoi(std::getenv("PGR2_TILE_REFRESH"))) : 60 * 20;
-    int view = NearestView(local);
-    static const int skew = std::getenv("PGR2_TILE_SKEW") ? std::atoi(std::getenv("PGR2_TILE_SKEW")) : 0;  // testing: a view this many azimuths off
-    if (skew && view < kViews - 1) view = view / kAzimuths * kAzimuths + (view % kAzimuths + skew + kAzimuths) % kAzimuths;
     Tile* have = nullptr;
     for (Tile& t : g_tiles)
         if (t.ready && t.car == car && t.view == view) have = &t;
@@ -365,10 +418,11 @@ Tile* FindTile(X86Context& ctx, uint32_t car, const float local[3]) {
 }
 
 // the ground mesh with a tile: its matrix for this frame at c[0x8F], its texture in the map's place
-// The tile's silhouette is the car seen along its view; the light's own way differs by up to half a view's spacing. Each ground
-// point p (in the car's space) is moved to where the view's ray through the car's middle slice (height h) meets p's level, the
-// slice point being where the light's ray from p crosses it: p' = p + (h - p.y) (D / D.y - V / V.y). Exact for that slice, so
-// the shadow follows the lamp smoothly as the car moves, with the nearest view's outline.
+// The tile's silhouette is the car seen along its view; the light's own way differs (up to a band in elevation, half an azimuth's
+// spacing). Each ground point p (in the car's space) is moved to where the view's ray through a slice of the car at height h meets
+// p's level, the slice point being where the light's ray from p crosses it: p' = p + (h - p.y) (D / D.y - V / V.y). Exact for
+// that slice, h half the car's height over the road. (The roof, which fits a box-shaped car's shadow length exactly with a view
+// below the light, matched mode 3 worse on a recorded race: 1.4 against 0.9 mean error; the cross-fade does more for the jumps.)
 void ShearToward(const float light[3], int view, float h, Matrix out) {
     float v[3];
     ViewDirection(view, v);
@@ -388,8 +442,14 @@ void DrawWithTile(X86Context& ctx, uint32_t car, Tile& t, const float light[3]) 
     static const bool no_shear = std::getenv("PGR2_TILE_NO_SHEAR") != nullptr;  // testing
     static const float slice = std::getenv("PGR2_TILE_SLICE") ? float(std::atof(std::getenv("PGR2_TILE_SLICE"))) : 0.5f;
     if (!no_shear) {
+        // the road's height in the car's space: the night pass's plane under the car (normalised, facing up) at the car's place
+        float n[4];
+        const float nl = std::sqrt(g_plane[0] * g_plane[0] + g_plane[1] * g_plane[1] + g_plane[2] * g_plane[2]);
+        for (int i = 0; i < 4; i++) n[i] = nl > 0 ? g_plane[i] / nl * (g_plane[1] < 0 ? -1.0f : 1.0f) : 0;
+        const float above = n[0] * world[12] + n[1] * world[13] + n[2] * world[14] + n[3];
+        const float ground = nl > 0 && std::fabs(above) < 3.0f ? -above : 0.0f;
         const float roof = F(car + kCarRoof);
-        ShearToward(light, t.view, slice * (roof > 0.3f && roof < 4.0f ? roof : 1.3f), shear);
+        ShearToward(light, t.view, ground + slice * (roof > 0.3f && roof < 4.0f ? roof : 1.3f), shear);
         Multiply(shear, t.k, sheared);
         Multiply(a, sheared, b);
     } else {
@@ -518,7 +578,11 @@ X86_FUNC(sub_0019430F) {
 
 // the car's shadow mesh drawn (thiscall on the mesh: shade; ret 4)
 X86_FUNC(sub_000C7C00) {
-    const uint32_t mode = pgr2::street_light_shadows;
+    // testing: PGR2_TILE_ALTERNATE=1, mode 3 and 4 on alternate frames (one run, the same moments; shots at consecutive reads)
+    static const bool alternate = std::getenv("PGR2_TILE_ALTERNATE") != nullptr;
+    static uint32_t frames_seen = 0, frame_was = 0;
+    if (alternate && g_frame != frame_was && g_pass) frame_was = g_frame, frames_seen++;
+    const uint32_t mode = alternate && pgr2::street_light_shadows >= 3 ? (g_frame / 2 % 2 ? 3u : 4u) : pgr2::street_light_shadows;
     if (!g_inner && g_pass && R32(ctx.esp) == kFromDraw) {
         // which of its car's lights this is (testing: PGR2_ONLY_LIGHT), and the counts for the perf recorder
         const uint32_t this_car = ctx.ebx - kCarFromPointer;
@@ -550,17 +614,22 @@ X86_FUNC(sub_000C7C00) {
         const float dl = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
         for (float& c : dir) c = dl > 0 ? c / dl : 0;
         const float lift = std::max(-dir[1], 0.05f);  // the sun's colour is scaled by this
-        uint32_t colour = 0;
-        for (int c = 0; c < 4; c++) {  // channels as 0x21920 pairs them: ambient +0, +4, +8, +C with colour bytes 16, 8, 0, 24
-            const int shift = c == 0 ? 16 : c == 1 ? 8 : c == 2 ? 0 : 24;
-            // the flattened mesh is a closed hull whose fans overlap a few layers deep, each multiplying: the console's shadow is
-            // about the shade to the power kDarken where it is darkest; the map's mesh multiplies once, so it is given that
-            static const float darken = std::getenv("PGR2_MAP_DARKEN") ? float(std::atof(std::getenv("PGR2_MAP_DARKEN"))) : 4.0f;
-            const float want = std::clamp(std::pow(float(shade >> shift & 0xFF) / 255.0f, darken), 0.02f, 1.0f);
-            const float ambient = F(car + kCarAmbient + c * 4);
-            const float light = ambient * (1.0f / want - 1.0f) / lift;  // colour x lift = ambient (1 / shade - 1)
-            colour |= uint32_t(std::clamp(std::lround(light * 255.0f), 0L, 255L)) << shift;
-        }
+        // the colour for a pass carrying this share of the shadow (shares multiply: two passes of 1/2 each are one whole)
+        auto colour_for = [&](float share) {
+            uint32_t colour = 0;
+            for (int c = 0; c < 4; c++) {  // channels as 0x21920 pairs them: ambient +0, +4, +8, +C with colour bytes 16, 8, 0, 24
+                const int shift = c == 0 ? 16 : c == 1 ? 8 : c == 2 ? 0 : 24;
+                // the flattened mesh is a closed hull whose fans overlap a few layers deep, each multiplying: the console's shadow is
+                // about the shade to the power kDarken where it is darkest; the map's mesh multiplies once, so it is given that
+                static const float darken = std::getenv("PGR2_MAP_DARKEN") ? float(std::atof(std::getenv("PGR2_MAP_DARKEN"))) : 4.0f;
+                const float want = std::clamp(std::pow(float(shade >> shift & 0xFF) / 255.0f, darken * share), 0.02f, 1.0f);
+                const float ambient = F(car + kCarAmbient + c * 4);
+                const float light = ambient * (1.0f / want - 1.0f) / lift;  // colour x lift = ambient (1 / shade - 1)
+                colour |= uint32_t(std::clamp(std::lround(light * 255.0f), 0L, 255L)) << shift;
+            }
+            return colour;
+        };
+        const uint32_t colour = colour_for(1.0f);
         uint8_t sun[12];
         std::memcpy(sun, &kernel::G<uint8_t>(kSunDirection), 12);
         const uint32_t sun_colour = R32(kSunColour);
@@ -590,20 +659,31 @@ X86_FUNC(sub_000C7C00) {
                 const float n2 = row[0] * row[0] + row[1] * row[1] + row[2] * row[2];
                 local[i] = n2 > 0 ? (row[0] * dir[0] + row[1] * dir[1] + row[2] * dir[2]) / n2 : 0;
             }
-            static const bool tile_log = std::getenv("PGR2_TILE_LOG") != nullptr;
-            static int said_local = 0;
-            if (tile_log && said_local < 10) {
-                said_local++;
-                LOGR("street light shadows: car %08X rows x %.2f %.2f %.2f y %.2f %.2f %.2f z %.2f %.2f %.2f at %.2f %.2f %.2f (position %.2f %.2f %.2f), "
-                     "light %.2f %.2f %.2f, in the car's space %.2f %.2f %.2f, roof %.2f", car, world[0], world[1], world[2], world[4], world[5],
-                     world[6], world[8], world[9], world[10], world[12], world[13], world[14], F(car + 0x44), F(car + 0x48), F(car + 0x4C), dir[0],
-                     dir[1], dir[2], local[0], local[1], local[2], F(car + kCarRoof));
-            }
+            // the views either side of the light's way, each with its share of the shadow (ChooseViews). Each pass has a stencil
+            // mark of its own, so the passes compound where they overlap and their shares multiply to the whole shadow
+            Pick picks[4];
+            int count = ChooseViews(local, picks);
+            Tile* tiles[4] = {};
             const uint32_t made_before = g_made_this_frame;
-            Tile* tile = FindTile(ctx, car, local);
-            (tile ? (g_made_this_frame != made_before ? g_tiles_made : g_tiles_reused) : g_tiles_missing)++;
+            float total = 0;
+            int kept = 0;
+            for (int k = 0; k < count; k++)
+                if (Tile* t = FindTile(ctx, car, local, picks[k].view)) tiles[kept] = t, picks[kept] = picks[k], total += picks[k].share, kept++;
+            count = kept;
+            (count ? (g_made_this_frame != made_before ? g_tiles_made : g_tiles_reused) : g_tiles_missing)++;
+            if (count > 1) g_tiles_faded++;
+            static const bool trace_log = std::getenv("PGR2_TILE_TRACE_LOG") != nullptr;  // testing: the followed car's lights in the log
+            if (trace_log && car == kFirstCar)
+                LOGR("tile trace: frame %u lamp %.1f %.1f %.1f shade %02X views %d %.2f, %d %.2f, %d %.2f, %d %.2f, made %u", g_frame, g_lamp[0],
+                     g_lamp[1], g_lamp[2], shade & 0xFF, count > 0 ? tiles[0]->view : -1, count > 0 ? picks[0].share : 0, count > 1 ? tiles[1]->view : -1,
+                     count > 1 ? picks[1].share : 0, count > 2 ? tiles[2]->view : -1, count > 2 ? picks[2].share : 0, count > 3 ? tiles[3]->view : -1,
+                     count > 3 ? picks[3].share : 0, g_made_this_frame - made_before);
             const uint64_t t1 = perf::Ticks();
-            if (tile) DrawWithTile(ctx, car, *tile, local);
+            for (int k = 0; k < count; k++) {
+                if (k > 0) pgr2::g_shadow_mark = pgr2::g_shadow_mark % 255 + 1;
+                kernel::W32(kSunColour, count > 1 ? colour_for(picks[k].share / total) : colour);
+                DrawWithTile(ctx, car, *tiles[k], local);
+            }
             g_map_ticks += t1 - t0, g_mesh_ticks += perf::Ticks() - t1;
         } else {
             ctx.ecx = kShadowObject;
@@ -635,8 +715,8 @@ X86_FUNC(sub_000C7C00) {
             const double tick_ms = 1000.0 / 24e6;  // the ARM counter (perf::Ticks)
             LOGR("street light shadows: %u maps and meshes drawn in 2 s; per shadow, map %.3f ms, mesh %.3f ms (game thread)", pairs,
                  pairs ? g_map_ticks * tick_ms / pairs : 0.0, pairs ? g_mesh_ticks * tick_ms / pairs : 0.0);
-            if (mode >= 4) LOGR("street light shadows: tiles made %u, reused %u, missing %u", g_tiles_made, g_tiles_reused, g_tiles_missing);
-            g_tiles_made = g_tiles_reused = g_tiles_missing = 0;
+            if (mode >= 4) LOGR("street light shadows: tiles made %u, reused %u, missing %u; cross-faded %u", g_tiles_made, g_tiles_reused, g_tiles_missing, g_tiles_faded);
+            g_tiles_made = g_tiles_reused = g_tiles_missing = g_tiles_faded = 0;
             pairs = 0;
             g_map_ticks = g_mesh_ticks = 0;
             since = std::chrono::steady_clock::now();
