@@ -37,6 +37,18 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - street light shadows: shadow maps only, cheaper; headlight shadows removed (branch headlight-shadows)
+
+- `street_light_shadows` is now 0 (as the console) or 1 (default, shadow maps; an old 3 still means on). Removed: modes 1 and 2
+  (soft, from the lamp), 4 (maps cached per car and direction: cheaper but its shadows switched shape), headlight shadows
+  (the user was not happy with the look; may be revisited: commits a652f4f, 22e7b39) and the light pool debug view.
+- Cheaper, measured on the recorded night race (tools/perf/shadow_report.py, idle machine): the night pass ran twice a frame,
+  the second time inside planar_water.cpp's mirrored copy of the view, where the road under the cars is not seen: no street
+  light shadows there now. The ground mesh's road gather (0xBF3F0, all of the mesh's time) runs once per car a batch, the
+  car's other lights drawing the same list (0x376DE8). Street light zone 1.93 -> 0.86 ms a frame, work p95 11.9 -> 8.8 ms
+  (console 6.9); with 6+ cars 13.6 -> 9.3. Screenshots at five moments unchanged. A map costs about 0.045 ms of game thread.
+- Not checked: Windows (the fixed map scale is Metal only), other cities.
+
 ### 2026-11-16 - street light shadows from shadow maps, more lights (branch headlight-shadows)
 
 - `street_light_shadows` 3, now the default: for each light the night car pass 0x32D10 keeps, the day's machinery is pointed at

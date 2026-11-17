@@ -182,11 +182,11 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   unbinding it takes all the light around the car; the strip is the beam ahead. A test that skips 0x180230 misleads: the
   road then samples a stale copy of the texture and stays lit. Car fields: +0xA4 radius, +0xA8 width, +0xAC length;
   `car+0xB68` lamps hold their place on screen for the camera being drawn, not in the car. `0x3CD804` keeps pointing at
-  the pool's camera after the pass. `src/game/headlight_shadows.cpp` cuts cars' shadows out of the strip.
+  the pool's camera after the pass. Cutting cars' shadows out of the strip (headlight shadows) was tried and removed (2026-11-17; commits a652f4f, 22e7b39 on branch headlight-shadows).
 - **[PC] Drawing from a hook** (2026-11-16). Begin/End vertices are inline commands the runtime reads at the next HLE call:
   Swap reads them after moving to the next back buffer, which is then cleared, so end with an HLE call. On Metal a draw
   reading a colour target in stage 0 into another target becomes a full screen depth copy (MetalBackend::DepthCopy) and
-  the draw itself is dropped: read such a texture in stage 1 or above. A pretransformed vertex at z 0 sits on the near
+  the draw itself is dropped: read such a texture in stage 1 or above (found drawing the light pool over the frame, a debug view since removed). A pretransformed vertex at z 0 sits on the near
   clip plane.
 - **[PGR2] Camera kinds** (`+0x40`): 0 main, 1 mirror, 2 reflection cube, 3 the camera of target `0x48639C` (0x180230, built by 0x1848D0), which stands at y -10000 until it follows the car and looks like the light pool's; the game has no planar reflection pass (2026-11-06, read from the code). Measured main: far 3000, object range
   x1, width 640, scale 1.06. Mirror: far 500, range x0.3, width 200, scale 1.13, view mode 4 only. Cube: far 30, range x0.1, 256 wide.

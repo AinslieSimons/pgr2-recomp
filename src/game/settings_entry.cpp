@@ -40,7 +40,7 @@ extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflect
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao, street_light_shadows;
-extern bool menus_4x3, cpu_car_shadows, headlight_shadows, water_area_cull, smoke_physics, smoke_lighting;
+extern bool menus_4x3, cpu_car_shadows, water_area_cull, smoke_physics, smoke_lighting;
 extern uint32_t smoke_duration, smoke_density;
 void SetBakedAo(uint32_t percent);  // src/game/baked_ao.cpp
 
@@ -204,13 +204,10 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Every Car"}; },
      [] { return uint32_t(cpu_car_shadows); },
      [](uint32_t i) { cpu_car_shadows = i != 0; }},
-    {u"Street Light Shadows", u"At night: Shadow Map gives the car's true shape from each lamp (costs frame rate); Cached Maps keeps each car's maps: cheaper, less exact.",
-     [] { return Choices{u"Console", u"Soft", u"From Lamp", u"Shadow Map", u"Cached Maps"}; },
-     [] { return std::min<uint32_t>(street_light_shadows, 4); },
+    {u"Street Light Shadows", u"At night: Shadow Map casts the car's true shape from each street lamp (costs some frame rate); Console is the original hard-edged shadow.",
+     [] { return Choices{u"Console", u"Shadow Map"}; },
+     [] { return uint32_t(street_light_shadows != 0); },
      [](uint32_t i) { street_light_shadows = i; }},
-    {u"Headlight Shadows", u"At night a car in your headlights casts a shadow in their beam on the road.", OnOff,
-     [] { return uint32_t(headlight_shadows); },
-     [](uint32_t i) { headlight_shadows = i != 0; }},
 };
 
 // the reflection cube's far plane in metres (0 the console's 30), the ray traced scene's reach and ray length
