@@ -212,6 +212,7 @@ frame at 3440x1440.
 - **Console Accurate Depth** - W-buffered depth as the Xbox does it, keeping car bodies, showroom cars and street lights right.
 - **Reflections** - Car paint and glass reflections from the game's environment cube.
 - **Water reflections** - Water mirrors the city and cars around it, rather than a fixed picture of the city (Water Reflections, on by default). Not on the console. Windows untested.
+- **Street light shadows** - At night each street lamp casts a car's true shape on the road, from the lamp (Street Light Shadows: Shadow Map, the default, or Console for the original hard-edged shadow; Street Light Shadow Reach for how far). Not on the console. Windows untested.
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble. Any console input can be mapped to any controller input.

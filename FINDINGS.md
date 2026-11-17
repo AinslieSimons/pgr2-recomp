@@ -173,7 +173,11 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   divided by d (0x30AE0), drawn as a multiply (ZERO, SRC_COLOR) of base / (base + strength^2 colour). The draw is W-buffered:
   its w is its depth, so a shadow matrix scaled differently lands behind the road or the camera. The sun shadow's direction is
   0x49EE8C (the way the light travels, y < 0; -y scales its colour 0x49EEA8); its map 0x1892E0 and ground mesh 0x21920 (the
-  road's collision triangles within 4 m, 0xBF3F0 on 0x381910) work at night too. `src/game/night_shadows.cpp`.
+  road's collision triangles within 4 m, 0xBF3F0 on 0x381910) work at night too. 0xBF3F0 (stdcall: list, centre, radius, 4)
+  gathers into its own list 0x376DE8 (0xC7980) when the list is 0, then draws the list (0xBF0B0): the gather is nearly all its
+  time, and a list passed in is drawn again without it. With planar water on, the race view 0x17FCC0 runs twice a frame (the
+  second planar_water.cpp's mirrored copy), and 0x32D10 with it. `src/game/night_shadows.cpp` (2026-11-17: shadow maps per light,
+  batched; none in the mirrored copy; one gather per car).
 - **[PGR2] The light pool at night** (2026-11-16). 0x180230 (camera kind 3) draws, into target `0x48639C` (LIN_A8R8G8B8
   256x256, depth LIN_D16 from 0x178780: no stencil): the world, the cars and the light pass 0x42CE0 with colour writes RGB,
   then the followed car's headlight beam with alpha only (0x32850 -> 0x1F2A0 -> 0x1D4A0: one triangle strip in car space,

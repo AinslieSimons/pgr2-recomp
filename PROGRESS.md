@@ -33,6 +33,8 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 - Ultrawide: menus, HUD, replays confirmed on 32:9; the rear view mirror confirmed (2026-10-25)
 - Launcher (PGR2Launcher.exe, launcher.bat): builds and launches the game on Windows (2026-10-22)
 - Release 1.0 (2026-10-22): the launcher built by .github/workflows/release.yml on a tag v*; 1.0.1 the same day; 1.0.2 on 2026-10-23 (radio, replays); 1.0.3 on 2026-10-25 (Paris, radio volume, pedals, mirror, profiles, media patched discs); 1.1.0 on 2026-10-26 (your music, sharp text and HUD, Nurburgring sky, shader cache, Quit game); 1.2.0 on 2026-10-29 (launcher updates, PC Settings page, wheels, mirror); 1.3.0 on 2026-10-31 (languages); 1.4.0 on 2026-10-31 (sharpening, MSAA and FXAA separate)
+- Night street light shadows (2026-11-17): each lamp casts the car's shadow map (F1 > street_light_shadows, Recomp > Detail;
+  1 default, 0 the console's); about 2 ms a frame over the console's with 6+ cars on Metal; Windows to confirm
 - Upstream: draft PR description in .local/upstream-pr.md, not sent
 
 ## Log
