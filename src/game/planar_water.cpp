@@ -469,6 +469,11 @@ void WaterBeforeView(X86Context& ctx) {
     ctx.ecx = camera;
 }
 
+// true while the mirrored copy of the race view draws (src/game/night_shadows.cpp leaves its street light shadows out of it)
+bool DrawingWaterReflection() {
+    return g_busy;
+}
+
 }  // namespace pgr2
 
 namespace pgr2 {

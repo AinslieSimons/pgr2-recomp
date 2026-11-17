@@ -46,6 +46,7 @@
 #include "kernel/memory.h"
 
 namespace pgr2 {
+bool DrawingWaterReflection();  // src/game/planar_water.cpp
 extern uint32_t street_light_shadows;  // src/common/game_info.cpp
 extern uint32_t street_light_reach;    // src/common/game_info.cpp: percent of each light's radius
 extern bool cpu_car_shadows;           // src/common/game_info.cpp
@@ -568,8 +569,33 @@ bool EnsureBatch(X86Context& ctx) {
     return true;
 }
 
+bool g_reflection = false;  // the pass is drawing into the water's reflection
+// the road's triangles round a car, gathered by 0xBF3F0 into its list (0x376DE8) for a car's first shadow in a batch and drawn again
+// from it for the car's others (testing: PGR2_NO_GATHER_REUSE=1 gathers each time)
+constexpr uint32_t kRoadList = 0x376DE8;
+uint32_t g_mesh_car = 0, g_gathered_car = 0;
+float g_gathered_radius = 0;
+
+// testing: PGR2_SHADOW_PROFILE=1 logs the batch's time a map and a mesh every 600 frames
+struct Profile {
+    double map_ms = 0, mesh_ms = 0, gather_ms = 0;
+    uint64_t maps = 0, meshes = 0, frames = 0;
+};
+Profile g_profile;
+inline double NowMs() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 // the noted shadows drawn: maps, then meshes, a batch at a time
 void FlushBatch(X86Context& ctx) {
+    static const bool profile = std::getenv("PGR2_SHADOW_PROFILE") != nullptr;
+    if (profile && ++g_profile.frames % 600 == 0 && g_profile.maps) {
+        LOGR("shadow profile: %.1f maps a pass, %.3f ms a map, %.3f ms a mesh (%.3f gathering); a pass %.3f ms", double(g_profile.maps) / 600,
+             g_profile.map_ms / g_profile.maps, g_profile.mesh_ms / std::max<uint64_t>(1, g_profile.meshes),
+             g_profile.gather_ms / std::max<uint64_t>(1, g_profile.meshes),
+             (g_profile.map_ms + g_profile.mesh_ms) / 600);
+        g_profile = Profile{0, 0, 0, 0, 0, g_profile.frames};
+    }
     if (g_pending.empty()) return;
     if (!EnsureBatch(ctx)) {
         g_pending.clear();
@@ -588,10 +614,13 @@ void FlushBatch(X86Context& ctx) {
         for (size_t i = start; i < end; i++) {
             Tile& t = g_batch[i - start];
             const Pending& p = g_pending[i];
+            const double t0 = profile ? NowMs() : 0;
             ok[i - start] = PrepareSlotAt(ctx, t, kBatchArena + uint32_t(i - start) * g_batch_bytes, g_batch_bytes, g_batch_size, true) &&
                             DrawMap(ctx, t, g_batch_size, p.car, p.dir);
+            if (profile) g_profile.map_ms += NowMs() - t0, g_profile.maps++;
             if (ok[i - start]) std::memcpy(g_batch_matrix[i - start], g_captured_m, sizeof(Matrix));
         }
+        g_gathered_car = 0;  // the maps' draws may have used the list
         for (size_t i = start; i < end; i++) {
             if (!ok[i - start]) continue;
             const Pending& p = g_pending[i];
@@ -599,10 +628,14 @@ void FlushBatch(X86Context& ctx) {
             kernel::W32(kSunColour, p.colour);
             pgr2::g_shadow_mark = pgr2::g_shadow_mark % 255 + 1;
             g_fit_radius = p.radius;
+            const double t0 = profile ? NowMs() : 0;
+            g_mesh_car = p.car;
             DrawMesh(ctx, p.car, g_batch[i - start].texture, g_batch_matrix[i - start], false);
+            if (profile) g_profile.mesh_ms += NowMs() - t0, g_profile.meshes++;
         }
     }
     g_fit_radius = 0;
+    g_mesh_car = g_gathered_car = 0;
     g_inner = false;
     pgr2::cpu_car_shadows = cpu;
     std::memcpy(&kernel::G<uint8_t>(kSunDirection), sun, 12);
@@ -619,6 +652,10 @@ X86_FUNC(sub_00032D10) {
         ctx.esp += 4;
         return;
     }
+    // the water's mirrored copy of the view (src/game/planar_water.cpp) draws the console's shadows alone: the road under the cars
+    // is not in it, and the maps and meshes cost as much again as the view's own (testing: PGR2_SHADOWS_IN_WATER=1 keeps them)
+    static const bool in_water = std::getenv("PGR2_SHADOWS_IN_WATER") != nullptr;
+    g_reflection = !in_water && pgr2::DrawingWaterReflection();
     g_pass = true;
     g_have = false;
     last_car = 0;
@@ -627,7 +664,7 @@ X86_FUNC(sub_00032D10) {
     // reach: each light's radius (and the inner one where it is at full strength) widened for this pass only, so lights a little
     // farther off still cast, and stronger: 0x32D10 keeps a light within its radius (+0x28) of the car, at a strength (0x409E0)
     // falling from the inner radius (+0x2C) to the outer
-    const uint32_t reach = pgr2::street_light_shadows ? std::clamp<uint32_t>(pgr2::street_light_reach, 50, 400) : 100;
+    const uint32_t reach = pgr2::street_light_shadows && !g_reflection ? std::clamp<uint32_t>(pgr2::street_light_reach, 50, 400) : 100;
     const uint32_t records = R32(kLights), count = std::min<uint32_t>(R32(kLightCount), 65536);
     static std::vector<float> saved;
     saved.clear();
@@ -687,7 +724,9 @@ X86_FUNC(sub_000C7C00) {
     static const bool alternate = std::getenv("PGR2_TILE_ALTERNATE") != nullptr;
     static uint32_t frames_seen = 0, frame_was = 0;
     if (alternate && g_frame != frame_was && g_pass) frame_was = g_frame, frames_seen++;
-    const uint32_t mode = alternate && pgr2::street_light_shadows >= 3 ? (g_frame / 2 % 2 ? 3u : 4u) : pgr2::street_light_shadows;
+    const uint32_t mode = g_reflection                                     ? 0u
+                          : alternate && pgr2::street_light_shadows >= 3 ? (g_frame / 2 % 2 ? 3u : 4u)
+                                                                         : pgr2::street_light_shadows;
     if (!g_inner && g_pass && R32(ctx.esp) == kFromDraw) {
         // which of its car's lights this is (testing: PGR2_ONLY_LIGHT), and the counts for the perf recorder
         const uint32_t this_car = ctx.ebx - kCarFromPointer;
@@ -909,6 +948,16 @@ X86_FUNC(sub_000BF3F0) {
         const float radius = g_fit_radius > 0 ? g_fit_radius
                                               : std::min(F(ctx.esp + 12) * float(std::clamp<uint32_t>(pgr2::street_light_reach, 100, 300)) / 100.0f, 12.0f);
         WF(ctx.esp + 12, radius);
+        // (list, centre, radius, ?; stdcall): with no list it gathers into its own (0x376DE8), then draws the list
+        static const bool reuse = !std::getenv("PGR2_NO_GATHER_REUSE");
+        const bool own = R32(ctx.esp + 4) == 0;
+        if (reuse && own && g_mesh_car && g_mesh_car == g_gathered_car && radius <= g_gathered_radius) kernel::W32(ctx.esp + 4, kRoadList);
+        const bool gathers = R32(ctx.esp + 4) == 0;
+        const double t0 = NowMs();
+        __imp__sub_000BF3F0(ctx, base);
+        g_profile.gather_ms += NowMs() - t0;
+        if (gathers) g_gathered_car = g_mesh_car, g_gathered_radius = radius;
+        return;
     }
     __imp__sub_000BF3F0(ctx, base);
 }
@@ -929,3 +978,4 @@ X86_FUNC(sub_0019440D) {
     }
     __imp__sub_0019440D(ctx, base);
 }
+
