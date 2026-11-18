@@ -39,6 +39,23 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - night: the mirror's road lit by its own light pool (branch claude/night-mirror-bbf691)
+
+- The road's night light is the light pool, a 256x256 screen space light buffer of the main view (0x180230: world, cars, street
+  light glows; each car's headlight beam into its alpha, 0x1F1D0 for the other cars, 25 m). The road reads it only as material
+  mode 8, which needs the pool camera [0x3CD808] to have the camera being drawn as its source (0x118E01): the mirror never did,
+  so its road had no street light glow and no beams of the cars behind, and their shadows lay on unlit road.
+- `src/game/mirror_pool.cpp`, setting `mirror_light_pool` (on; F1 "Mirror night lighting", Recomp > Detail "Mirror Night
+  Lighting"; `PGR2_MIRROR_POOL=0` off): before the mirror's view the pool pass runs again on a copy of the pool camera (its own
+  visibility tests: the game's run twice in a frame hung) with the mirror's viewer, aspect, view and place, into our own target;
+  while the mirror draws, the road's pool camera and texture are ours and the mirror maps as a full frame (0x187B00).
+- Evidence (the user's recording, bumper view, night, 16:10, MSAA 4x; same reads): the RX-7 behind lights the road ahead of it
+  in the mirror (before: dark); no stray light where no car is; the main view below the mirror the same. Cost over 3200 frames:
+  work 5.49 -> 5.69 ms mean, p95 7.22 -> 7.51; GPU 12.33 -> 12.42 ms; draws 4159 -> 4357; no traps.
+- Found: the game's pool camera keeps a 4:3 projection (x scale 1.415) while the main view on a 16:10 frame is drawn at 1.6
+  (1.179), so the main view's pool light (street light glows, beams) is probably spread sideways by 1.2 there. Not changed.
+- Not checked: Windows (guest-level change, no renderer code), the hood view, split screen, other cities, the smoke test.
+
 ### 2026-11-17 - night: the rear view mirror's coronas on their lamps; its car shadows (branch claude/night-mirror-bbf691)
 
 - Coronas in the mirror sat off their lamps. The light pass 0x42CE0 places each corona through the camera's projection 0x15D70,

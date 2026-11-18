@@ -28,6 +28,7 @@
 #include "kernel/memory.h"
 
 namespace pgr2 {
+void MirrorPoolEmptyTests(X86Context& ctx);  // src/game/mirror_pool.cpp
 extern bool planar_water;  // src/common/game_info.cpp
 extern bool water_area_cull;  // src/common/game_info.cpp
 extern uint32_t water_scale;  // src/common/game_info.cpp: the reflection's size, percent of the frame's
@@ -236,6 +237,7 @@ X86_FUNC(sub_00187DC0) {
         kernel::CallGuest(ctx, kEmptyTests, {});
         ctx.ecx = camera;
     }
+    if (camera == R32(kHolder + kHolderCameras)) pgr2::MirrorPoolEmptyTests(ctx);
 }
 
 // what a camera's draw builds its view with

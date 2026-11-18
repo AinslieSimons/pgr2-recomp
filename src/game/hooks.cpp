@@ -632,12 +632,13 @@ X86_FUNC(sub_00177C70) {
 // 0, the face), a stub that answers yes, whether to draw each face; a face it turns down keeps its picture. So each
 // pass draws every other face, and each face still changes 30 times a second, as on the console. reflection_every_frame
 // (PGR2_CUBE_ALL=1) draws them all.
-namespace pgr2 { extern bool reflection_every_frame, g_extra_cube; }
+namespace pgr2 { extern bool reflection_every_frame, g_extra_cube, g_mirror_pool_pass; }
 X86_FUNC(sub_00179290) {
     const bool all = pgr2::reflection_every_frame;
     static uint32_t pass = 0;
     uint32_t face = kernel::R32(ctx.esp + 8);
-    if (pgr2::g_extra_cube) {  // a car's own cube (src/game/car_reflections.cpp): every face, the count left alone
+    if (pgr2::g_extra_cube || pgr2::g_mirror_pool_pass) {  // a car's own cube (src/game/car_reflections.cpp), the mirror's light
+        // pool (src/game/mirror_pool.cpp): every face, the count left alone
         ctx.eax = 1;
         ctx.esp += 12;
         return;
@@ -765,6 +766,8 @@ X86_FUNC(sub_000314E0) {
 
 namespace pgr2 {
 void WaterBeforeView(X86Context& ctx);  // src/game/planar_water.cpp
+void MirrorPoolBeforeView(X86Context& ctx);  // src/game/mirror_pool.cpp
+void MirrorPoolAfterView();
 }
 // the race view's drawing (0x17FCC0, ecx the view, [4] its camera): flares and other effects are skipped when the
 // camera's mode +0x128 is 12 and 0x291A27 is not -1. PGR2_FLARE_LOG=1 logs those when they change
@@ -785,8 +788,10 @@ X86_FUNC(sub_0017FCC0) {
         perf::Zone zone(pgr2::kZWaterView);
         pgr2::WaterBeforeView(ctx);
     }
+    pgr2::MirrorPoolBeforeView(ctx);
     perf::Zone zone(pgr2::kZGameView);
     __imp__sub_0017FCC0(ctx, base);
+    pgr2::MirrorPoolAfterView();
 }
 
 // a view's car lights (0x42CE0: from the race view 0x17FCC0, the reflection cubes 0x180040, the light pool 0x180230 and
