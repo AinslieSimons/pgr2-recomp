@@ -39,6 +39,21 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - night: the rear view mirror's coronas on their lamps; its car shadows (branch claude/night-mirror-bbf691)
+
+- Coronas in the mirror sat off their lamps. The light pass 0x42CE0 places each corona through the camera's projection 0x15D70,
+  which maps to the box (+0x28 x, +0x30 width), not to the viewport; on a frame wider than the HUD's shape the mirror's viewport
+  is narrowed about the centre (hooks.cpp Fit), so its coronas spread sideways by frame / HUD shape (1.2 at 16:10). Fixed:
+  during the light pass a narrowed camera's box holds the narrowed viewport (`PGR2_MIRROR_CORONAS=0` as before).
+  Evidence: the user's recording (`mirror.pad`, bumper view, night, 16:10, MSAA 4x), same frame: the RX-7's lamps at x 535 and
+  690 of the mirror crop, coronas at 495 and 665 before, 535 and 688 after; the street lamp's corona on its lamp too. Main view
+  untouched (only narrowed cameras).
+- Car shadows in the mirror: the night pass runs for the mirror camera (kind 1, view mode 4) and asks for nearly as many
+  shadows there as in the main view (17,961 against 20,039 over the run). Drawn black (test), each shows as a patch on the road
+  in front of the following car, and with the depth test off it is the same; in the console's and the shadow map's shades the
+  same place is only a little darker. They are drawn; they barely show because they multiply a road the light pool does not
+  light there (only street lights near the followed car and its own beam are in the pool). Not changed; to discuss.
+
 ### 2026-11-17 - street light shadows: shadow maps only, cheaper; headlight shadows removed (branch headlight-shadows)
 
 - `street_light_shadows` is now 0 (as the console) or 1 (default, shadow maps; an old 3 still means on). Removed: modes 1 and 2
