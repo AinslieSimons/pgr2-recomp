@@ -172,10 +172,34 @@ void MirrorPoolAfterView() {
 }  // namespace pgr2
 
 // the light pool's draw (thiscall on its camera): the game's pool camera noted
+// The game's pool camera keeps the aspect it was made with (0x1848D0, in the menus: 4:3), as hooks.cpp's ultrawide code reshapes
+// only the views it saw set up; the main view on a wider frame is drawn at the frame's shape, so the road read the pool's light
+// spread sideways from the centre (by 1.2 at 16:10). The pool takes its source view's aspect for each pass (PGR2_POOL_ASPECT=0 as
+// before).
 X86_FUNC(sub_00180230) {
     if (!pgr2::g_mirror_pool_pass) {
         if (g_pool != ctx.ecx) LOGR("mirror pool: the game's pool camera %08X", ctx.ecx);
         g_pool = ctx.ecx;
+        static const bool keep = [] {
+            const char* e = std::getenv("PGR2_POOL_ASPECT");
+            return e && *e == '0';
+        }();
+        const uint32_t source = R32(ctx.ecx + kPoolSource);
+        if (!keep && source && R32(source + kCamKind) == 0 && R32(ctx.ecx + kCamAspect) != R32(source + kCamAspect)) {
+            float was, now;
+            std::memcpy(&was, &G<uint8_t>(ctx.ecx + kCamAspect), 4);
+            std::memcpy(&now, &G<uint8_t>(source + kCamAspect), 4);
+            static int said = 0;
+            if (said++ < 8) LOGR("light pool: aspect %.3f -> %.3f, its source view's", was, now);
+            W32(ctx.ecx + kCamAspect, R32(source + kCamAspect));
+        }
+        static uint32_t passes = 0;
+        if (source && ++passes == 600) {
+            float pool_x, view_x;
+            std::memcpy(&pool_x, &G<uint8_t>(ctx.ecx + 0x130), 4);
+            std::memcpy(&view_x, &G<uint8_t>(source + 0x130), 4);
+            LOGR("light pool: projection x scale %.3f, its source view's %.3f", pool_x, view_x);
+        }
     }
     __imp__sub_00180230(ctx, base);
 }

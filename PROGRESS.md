@@ -39,6 +39,17 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - night: the main view's light pool in the frame's shape (branch claude/night-mirror-bbf691)
+
+- The game's pool camera kept the 4:3 aspect it was made with (0x1848D0, in the menus); hooks.cpp's ultrawide code reshapes only
+  the views it sees set up. The road maps the pool with the main view's projection, so on a 16:10 frame the pool's light (street
+  light glows, the beams of the cars ahead, the dark outline a car leaves in them) lay 1.2 times too far from the screen's centre.
+  `src/game/mirror_pool.cpp`: each pass, the pool camera takes its source view's aspect (`PGR2_POOL_ASPECT=0` as before).
+- Evidence (the user's recording, bumper view, 16:10): pool projection x scale 1.415 against the main view's 1.179 before, 1.179
+  and 1.179 after ("light pool: projection x scale" in the log). Screenshots at eight moments: the road's light changes a little
+  where the pool lights it, nothing else; the replays are a frame apart at some reads, so no pixel comparison.
+- Not checked: 16:9 and ultrawide frames (same mechanism: the main view's aspect is the frame's), Windows.
+
 ### 2026-11-17 - night: the mirror's road lit by its own light pool (branch claude/night-mirror-bbf691)
 
 - The road's night light is the light pool, a 256x256 screen space light buffer of the main view (0x180230: world, cars, street
@@ -53,7 +64,7 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
   in the mirror (before: dark); no stray light where no car is; the main view below the mirror the same. Cost over 3200 frames:
   work 5.49 -> 5.69 ms mean, p95 7.22 -> 7.51; GPU 12.33 -> 12.42 ms; draws 4159 -> 4357; no traps.
 - Found: the game's pool camera keeps a 4:3 projection (x scale 1.415) while the main view on a 16:10 frame is drawn at 1.6
-  (1.179), so the main view's pool light (street light glows, beams) is probably spread sideways by 1.2 there. Not changed.
+  (1.179), so the main view's pool light (street light glows, beams) is spread sideways by 1.2 there (fixed in the entry above).
 - Not checked: Windows (guest-level change, no renderer code), the hood view, split screen, other cities, the smoke test.
 
 ### 2026-11-17 - night: the rear view mirror's coronas on their lamps; its car shadows (branch claude/night-mirror-bbf691)
