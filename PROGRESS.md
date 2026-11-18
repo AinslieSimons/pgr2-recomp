@@ -39,6 +39,18 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - night: the mirror's coronas reach as far as the main view's (branch claude/night-mirror-bbf691)
+
+- The user: mirror coronas cut off at a distance. 0x415B0 draws a lamp's corona only while its size (the view's box width x its
+  projection's x scale x the lamp's size / distance) is over 1.0 (0x41951); the mirror's box is 167 units wide at 16:10 (200 on the
+  console) against the main view's 640, so its coronas went out at about a third of the main view's distance.
+- The project's first `[[hook]]` (config/pgr2.toml, before 0x41951) calls `MirrorCoronaReach` in `src/common/mirror_coronas.cpp`
+  (host side: on Windows the game code DLL imports hooks from the executable): a mirror corona the main view would still draw is
+  kept at the least size that passes. `PGR2_MIRROR_CORONA_REACH=0` as the console, `=N` N times the main view's reach.
+- Evidence (the user's recording, bumper view, night): of 8,862 mirror coronas under the size test, 4,853 kept; no traps. In the
+  screenshots a far car's lamp is a faint dot either way: past the size test the corona is small and dim, so the change is best
+  judged in play. Not checked: Windows (the hook's export), the console's 4:3 frame.
+
 ### 2026-11-17 - night: street light shadow maps in the mirror (branch claude/night-mirror-bbf691)
 
 - The user saw no shadow map shadows in the mirror. night_shadows.cpp drew each car's ground mesh with cull mode 0x900 (as the
