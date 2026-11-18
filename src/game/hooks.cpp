@@ -772,10 +772,11 @@ X86_EXTERN_FUNC(__imp__sub_0017FCC0);
 X86_FUNC(sub_0017FCC0) {
     static const bool log = std::getenv("PGR2_FLARE_LOG") != nullptr;
     if (log) {
-        uint32_t cam = kernel::R32(ctx.ecx + 16);
+        uint32_t cam = kernel::R32(ctx.ecx + 16), kind = kernel::R32(ctx.ecx + 0x40) & 3;
         uint32_t now = (cam ? kernel::R32(cam + 0x128) : 0xFFFF) << 8 | kernel::G<uint8_t>(0x291A27);
-        static uint32_t last = ~0u;
-        if (now != last) LOGR("pgr2: race view camera mode %u, 291A27 %d", (last = now) >> 8, int8_t(now & 0xFF));
+        static uint32_t last[4] = {~0u, ~0u, ~0u, ~0u};
+        if (now != last[kind])
+            LOGR("pgr2: race view (camera kind %u) camera mode %u, 291A27 %d", kind, (last[kind] = now) >> 8, int8_t(now & 0xFF));
     }
     // PGR2_FLARES=1 (experiment): 0x291A27 -1, so the flare pass runs in camera mode 12 as in the other views
     static const bool flares = std::getenv("PGR2_FLARES") != nullptr;
@@ -792,13 +793,31 @@ X86_FUNC(sub_0017FCC0) {
 // 0x82BE7): the coronas (0x31570 -> 0x415B0) are screen space quads drawn without the depth test, so they were taken
 // for 2D and squeezed toward the centre with the HUD (the attract demo's 4:3, a frame wider than the HUD's shape),
 // landing beside their lamps, over the car's body. Nothing in the pass is 2D: hud_aspect wide enough that none is
-// squeezed, the caller's restored after
+// squeezed, the caller's restored after.
+// A narrowed view (the rear view mirror on a frame wider than the HUD's shape, Fit above): the coronas are placed and sized by
+// the camera's projection 0x15D70 from its box (+0x28 x, +0x30 width), not from the viewport the view is drawn in, so in the
+// mirror they spread sideways from its centre, off their lamps (by 1.2 at 16:10). The box is the narrowed viewport's for the pass.
 X86_EXTERN_FUNC(__imp__sub_00042CE0);
 X86_FUNC(sub_00042CE0) {
     float& hud = d3d::State().hud_aspect;
     const float was = hud;
     hud = 100.0f;
-    __imp__sub_00042CE0(ctx, base);
+    static const bool off = [] {  // PGR2_MIRROR_CORONAS=0: as before (testing)
+        const char* e = std::getenv("PGR2_MIRROR_CORONAS");
+        return e && *e == '0';
+    }();
+    const uint32_t cam = kernel::R32(0x3CD804);
+    const auto it = cam && !off ? narrowed.find(cam) : narrowed.end();
+    if (it == narrowed.end()) {
+        __imp__sub_00042CE0(ctx, base);
+    } else {
+        const uint32_t x = kernel::R32(cam + 0x28), w = kernel::R32(cam + 0x30);
+        kernel::W32(cam + 0x28, uint32_t(it->second.first));
+        kernel::W32(cam + 0x30, uint32_t(it->second.second));
+        __imp__sub_00042CE0(ctx, base);
+        kernel::W32(cam + 0x28, x);
+        kernel::W32(cam + 0x30, w);
+    }
     hud = was;
 }
 
