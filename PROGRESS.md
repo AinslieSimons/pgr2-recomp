@@ -39,6 +39,14 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-17 - night: street light shadow maps in the mirror (branch claude/night-mirror-bbf691)
+
+- The user saw no shadow map shadows in the mirror. night_shadows.cpp drew each car's ground mesh with cull mode 0x900 (as the
+  map draw leaves it); the mirror's camera is mirrored (+0x14), for which the game culls with 0x901 (0x186A30), so every mesh
+  triangle was culled there. The mesh now takes 0x901 on a mirrored camera.
+- Evidence (the user's recording, bumper view, night, same read): a dark shadow on the lit road in front of the RX-7 in the mirror,
+  none before. The main view is not mirrored and keeps 0x900.
+
 ### 2026-11-17 - night: the main view's light pool in the frame's shape (branch claude/night-mirror-bbf691)
 
 - The game's pool camera kept the 4:3 aspect it was made with (0x1848D0, in the menus); hooks.cpp's ultrawide code reshapes only

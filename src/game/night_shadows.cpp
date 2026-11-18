@@ -81,6 +81,7 @@ constexpr uint32_t kMapTexture = 0x486194;       // the map's texture, bound by 
 constexpr uint32_t kMapSize = 0x4861B4;          // its width and height (1024); the viewport is this x the scale
 constexpr uint32_t kCamera = 0x3CD804;           // the camera being drawn
 constexpr uint32_t kCullModeCopy = 0x486146, kCullMap = 0x900;  // the game's copy of the cull mode (16 bits), the map's
+constexpr uint32_t kCullMirrored = 0x901, kCamMirrored = 0x14;  // a mirrored camera's cull mode (0x186A30), its flag
 constexpr uint32_t kZEnableCopy = 0x486148, kZEnableW = 2;      // its copy of ZEnable (8 bits); 2 W-buffered
 constexpr uint32_t kSetCullMode = 0x1C11D0, kSetZEnable = 0x1C20F0;  // D3DDevice_SetRenderState_CullMode / _ZEnable (stdcall, value)
 constexpr uint32_t kCameraSetup = 0x185640;      // thiscall on the camera: its transforms for the draws that follow
@@ -164,9 +165,12 @@ bool DrawMap(X86Context& ctx, const Slot& t, uint32_t size, uint32_t car, const 
 void DrawMesh(X86Context& ctx, uint32_t car, uint32_t texture_header, const Matrix matrix) {
     // the states 0x1892E0 leaves, which the ground mesh draws with (the night pass's own differ): culling 0x900 (set for the car's
     // depth at 0x189A3D, never put back) and Z as W (0x189ABE); each through the game's copy of the state, as it sets them
-    if (kernel::R16(kCullModeCopy) != kCullMap) {
-        kernel::W16(kCullModeCopy, kCullMap);
-        kernel::CallGuest(ctx, kSetCullMode, {kCullMap});
+    // A mirrored camera (the rear view mirror, +0x14) turns the winding over: the game culls with 0x901 there (0x186A30), and the
+    // mesh culled with 0x900 drew nothing in the mirror
+    const uint16_t cull = kernel::G<uint8_t>(R32(kCamera) + kCamMirrored) ? kCullMirrored : kCullMap;
+    if (kernel::R16(kCullModeCopy) != cull) {
+        kernel::W16(kCullModeCopy, cull);
+        kernel::CallGuest(ctx, kSetCullMode, {cull});
     }
     if (kernel::G<uint8_t>(kZEnableCopy) != kZEnableW) {
         kernel::G<uint8_t>(kZEnableCopy) = kZEnableW;
