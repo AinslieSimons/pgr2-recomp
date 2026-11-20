@@ -39,6 +39,15 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-20 - rt-optimise merged into main (cheaper ray traced reflections)
+- Main repo: `rt-optimise` (2d466b8, 0cddfb1) merged. `hooks.cpp` `Same()` keeps main's fuller check (98e8b3c already tests
+  `cam` and `cam + 0x38`); both branches' PROGRESS entries kept. SDK: 6a93042 merged into SDK main (59bfc7c), no conflicts.
+- What it brings: traced car draws take their depth from w at the vertices (`DrawAdjust::raster_w`), draws with no other car
+  in reach drawn untraced, and the ray shader only on pixels whose ray meets a box (the 2026-11-11 entry has the numbers:
+  GPU 19.0-19.8 to 16.0-16.7 ms on the demos, measured on the older build).
+- Evidence: builds for macOS. Not run: the demos on main with traced reflections, to re-measure the gain after the prep thread
+  merge (`.local/research/perf-analysis.md`, item 1). Not pushed.
+
 ### 2026-11-19 - crash after 6.8 hours of night demos: guest thread stacks never freed (SDK, branch sleepy-agnesi-51412c)
 
 - The Mac build died with SIGBUS after 6.8 hours of night attract demos (about 271 area loads), in `kernel::W32` under
@@ -256,6 +265,45 @@ in use from 48 s.
 SDK `upstream-perf` (from `macos-port` 44c0b8a): hk21x/XboxXBERecomp main (60fc186) merged. Conflicts kept ours for the aspect/16:10 settings code (`settings.cpp`, `app.h`), both for the rest. The render thread's prep thread assembles each draw one step ahead; `MetalBackend::DrawAssembled` takes its result in place of `Assemble` (on by default, `XBE_PRE_ASSEMBLE=0` off). The state compare in `render_thread.cpp` is NEON on arm64. Metal skips its 3 KB vertex constant compare when `State::vsc_gen` is unchanged. `msl.cpp` translates upstream's Wine-friendly `ilu_rsq`/`ilu_log` text back to infinities (without it every shader failed and the picture was black). `XBE_CHECK_PRE=1` compares each prep assembly with a second one in Metal's `DrawAssembled`.
 Evidence (muted demos, M4 Pro, race_fps 120, fps_cap 120, perf recorder on, frames with 1500+ draws, warm cache, runs interleaved, two runs each): reflections build 74 and 84 fps / merge with prep thread off 89.7 and 90.2 / prep thread on 99.2 and 99.5. Frames over 12.5 ms 41.7% to 42.0 / 30.7 / 13.7. 1% low 36 / 47.5 / 56.6 fps; p99 27.5 / 21.0 / 17.7 ms. Assemble stage 2.9 / 2.2 / 0.01 ms, state send 4.2 / 1.6 / 1.8 ms, drawing-thread draw time 9.8 to 11.3 / 8.5 / 7.0 ms; GPU 8.1 / 8.1 / 7.6 ms. 40.4 million draws with `XBE_CHECK_PRE=1`: 0 assembled differently; `XBE_CHECK_STATE=1`: 0 stale vertex constant counts (606 draws "state differs", only in one scene, probably the title changing state after the check's copy).
 Not shown: pixel identity. The demos do not repeat at the moment, baseline against baseline differs in 3 of 10 shots (65%, 45%, 56% of bytes), and shots 1 and 2 differ from the merged build every time (an attract camera at another time, cause not known). The merge also took upstream's kernel changes (DPC at dispatch level). Not merged: the main repo's origin/main (16:10 hooks, 1.6.2/1.6.3), D3D12 pipeline code is carried but not built or run here. Next: find why shots 1 and 2 differ, the main repo merge, then `XBE_MERGE_DRAWS` and cube face resting stay off.
+### 2026-11-11 - cheaper ray traced reflections; a crash leaving a race
+
+**Ray traced reflections, cheaper** (SDK Metal backend, `src/game/car_reflections.cpp`). Three changes, all on with traced reflections:
+
+- **Rasterised W for traced draws.** Traced car draws take their W-buffer depth from the vertex shader: exact at each vertex and interpolated across the screen, never nearer than the pixel's own w. Their pixel shaders no longer write depth (`gpu::DrawAdjust::raster_w`, vertex `hud.w == 2`). A shader that writes depth runs before the depth test and outside Apple's hidden-surface removal, so every hidden car pixel used to trace its ray.
+- **Per-draw cull.** A draw whose car has no other car within the ray's reach is drawn untraced. The others test only their nearby boxes, at most four, from constants (`DrawConstants::tbox`); `XBE_TRACE_DRAWCULL=0` turns this off.
+- **Gate.** Each opaque traced draw is drawn three times:
+  1. with the cube shader, which has no ray code;
+  2. a gate draw (`PixelKey::trace_gate`, `kPsTracedGate`) that writes no colour and marks stencil bit 7 where the pixel's ray meets a box;
+  3. the ray shader, at depth EQUAL and only on marked pixels, clearing the bit.
+
+  Any `intersect` in a fragment shader cost about 1.1 ms a frame even when never reached, and the gate removes that for every pixel whose ray can't hit a car. `XBE_TRACE_GATE=0` turns it off.
+
+**Evidence.** Measured on the PGR2 demos at 2560x1600, render scale 3.33, MSAA 4x, M4 Pro, with `XBE_PERF`, counting the Hong Kong, Washington and Florence racing (Chicago and Barcelona have one car each):
+
+| | GPU ms a frame (mean) | p95 |
+|---|---|---|
+| traced, before | 19.0-19.8 | 33-35 |
+| traced, now | 16.0-16.15 (three runs) | 23.4-24.0 |
+| untraced | 14.6-14.85 | 20 |
+
+So the tracing overhead falls from +4.7 to +1.3 ms over untraced. Washington goes from 24.1 to 18.1 ms. Checked again after the test switches were removed, the next day: traced 16.65 and 16.70 ms, untraced 14.94 ms that day (+1.7).
+
+- **Visual checks.** The hit view (`XBE_TRACE_DEBUG=1`) puts its hits in the same places with and without the gate, and the normal shots show no artefacts.
+- **Tried and dropped:**
+  - one ray per 2x2 quad: slower;
+  - the acceleration structure's build flags: no gain; the scene is about 14k triangles, built in 0.08 ms;
+  - a 30 m ray: no gain.
+- **Played by hand on this build:** races with no issues seen.
+
+**Crash leaving a race** (`src/game/hooks.cpp`). `Reshape`, at the menus' change to 4:3, read a camera the game had freed and decommitted, which ended in SIGBUS in `Same`. `Same` now checks the camera's memory is committed (`mem::IsCommitted`).
+
+**Open.** In the bumper, hood and cockpit views the player's car shows in no other car's reflection:
+
+- **Ray tracing:** the game does not draw its body in those views, so it is not in the traced scene.
+- **The cubes:** with "Cars in Reflections" off they hold no cars.
+- **The tried fix:** treating the followed car as drawn in other cars' cube passes did not show it, even with Cars in Reflections on. It is not in this commit.
+
+The full measurements are in `.local/research/rt-results.md` in the rt-optimise worktree.
 
 ### 2026-11-09 - mirror corruption, 16:10 full screen, frame pacing
 
