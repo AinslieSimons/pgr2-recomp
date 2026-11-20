@@ -39,6 +39,21 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-19 - crash after 6.8 hours of night demos: guest thread stacks never freed (SDK, branch sleepy-agnesi-51412c)
+
+- The Mac build died with SIGBUS after 6.8 hours of night attract demos (about 271 area loads), in `kernel::W32` under
+  `CallGuest` as thread "guest 155C" started, at guest address 0xFFFFFF4C. Cause: every guest thread took 192 KB of
+  the 256 MB stack range (64 KB minimum stack and TLS, rounded to 128 KB, and a 64 KB guard) and exited without giving
+  it back. Ids start at 0x10 and step by 4, so 0x155C is about thread 1364, and the range holds 1365. `AllocStack`
+  returned 0, nothing checked, so esp became `0 - TLS - 16` and the first push faulted. Not cone-lighting: no threads there.
+- SDK `130a996`: at thread exit (return or PsTerminateSystemThread) the stack and KPCR are freed; the ETHREAD stays, as
+  waiters reach it by handle or pointer afterwards (a few hundred KB of system pool over a day). A failed stack, KPCR or
+  ETHREAD allocation now logs and aborts. Every 32nd thread start logs `threads: N guest threads started, M stacks in use`.
+- Evidence, Mac night demos (PGR2_NIGHT=1): 32 started / 9 stacks in use at 404 s, 64 / 10 at 998 s; PGR2 starts a
+  thread about every 18 s, as in the crashed run. `scripts/smoke.sh` cannot run on macOS (the harness needs
+  `sys/prctl.h`); not run on Linux or Windows.
+- Next: confirm a run past 7 hours; ETHREADs could be freed when the last handle closes if a longer session ever needs it.
+
 ### 2026-11-17 - street light shadows: shadow maps only, cheaper; headlight shadows removed (branch headlight-shadows)
 
 - `street_light_shadows` is now 0 (as the console) or 1 (default, shadow maps; an old 3 still means on). Removed: modes 1 and 2

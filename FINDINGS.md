@@ -48,6 +48,12 @@ Each item is marked:
   is 0x3EE, "damaged". A profile from a real Xbox (an Action Replay copy) can never match, so src/game hands the
   loader its stored signature and its own checks decide; saving signs it as this install's.
 
+- **[runtime] Guest thread stacks** (2026-11-19). PGR2 starts about 5 short-lived threads per area load (an attract
+  demo every 90 s at night). Each took 192 KB of the runtime's 256 MB stack range (0xD0000000) and never gave it back,
+  so about thread 1365 (6.8 hours of demos) got no stack: esp wrapped to 0xFFFFFFxx and its first push faulted (SIGBUS
+  in `kernel::W32` under `CallGuest`, thread "guest 155C"). The SDK now frees the stack and KPCR at thread exit and
+  aborts with a log line if one cannot be had; `threads: N guest threads started, M stacks in use` every 32 starts.
+
 ## Frame pacing and speed
 
 - **[console]** Titles pace themselves with the present interval (0x80000000 + vblanks), and the runtime now paces
