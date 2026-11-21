@@ -276,10 +276,17 @@ const std::vector<Row> kPerformance = {
      [] { return Choices{u"25%", u"50%", u"75%", u"100%", u"125%", u"150%", u"175%", u"200%"}; },
      [] { return Nearest(kRender, app::Get().render_percent); },
      [](uint32_t i) { app::Get().render_percent = kRender[i]; }},
+#ifdef __APPLE__  // MetalFX: the frame enlarged by Apple's upscaler (the SDK's scale_filter 2)
+    {u"Scaling Filter", u"How the frame reaches the screen's size. MetalFX upscales: lower the render scale to gain frame rate.",
+     [] { return Choices{u"Bilinear", u"Sharp", u"MetalFX"}; },
+     [] { return app::Get().scale_filter % 3; },
+     [](uint32_t i) { app::Get().scale_filter = i; }},
+#else
     {u"Scaling Filter", u"How the frame reaches the screen's size.",
      [] { return Choices{u"Bilinear", u"Sharp"}; },
      [] { return app::Get().scale_filter % 2; },
      [](uint32_t i) { app::Get().scale_filter = i; }},
+#endif
     {u"Frame Rate Cap", u"Limits the frame rate further than the game does.",
      [] { return Choices{u"30", u"60", u"120", u"144", u"240", u"None"}; },
      [] { return NearestCap(app::Get().fps_cap); },

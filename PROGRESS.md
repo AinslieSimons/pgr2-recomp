@@ -39,6 +39,12 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-20 - MetalFX in the game's Scaling Filter row (Mac)
+- PGR2's own settings pages replace the SDK's in F1, so the SDK's MetalFX choice (overlay.cpp's Graphics page) never
+  showed. settings_entry.cpp's Scaling Filter row now offers Bilinear, Sharp and MetalFX on the Mac (scale_filter 0-2;
+  it read the value % 2 before, so MetalFX set in pgr2.toml showed as Bilinear); other platforms unchanged.
+- Builds and links; not yet seen in the menus.
+
 ### 2026-11-20 - GPU savings: deferred clears, car cube budget, depth from vertices in reflections, MetalFX (Mac)
 From `.local/research/perf-analysis.md` (items 2 to 5).
 - SDK `metal.mm`, deferred clears: a whole-target clear waits and becomes the next draw's pass load action (a multisampled
