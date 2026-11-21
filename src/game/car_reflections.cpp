@@ -11,6 +11,7 @@
 // first, and the followed car, which the cube is drawn from inside, is left out by the cars' visibility check (0x1C900).
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -20,6 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "app/app.h"
 #include "app/perf.h"
 #include "core/log.h"
 #include "game/perf_zones.h"
@@ -37,6 +39,9 @@ extern bool car_reflections, cars_in_reflections, traced_reflections;  // src/co
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;  // src/common/game_info.cpp
 extern bool car_cubes;  // src/common/game_info.cpp
 extern uint32_t car_cube_every;  // src/common/game_info.cpp
+extern bool car_cube_budget;      // src/common/game_info.cpp
+extern uint32_t race_fps;         // src/common/game_info.cpp
+std::atomic<uint32_t> g_cubes_rested{0};  // the perf recorder's: other cars' cubes resting this frame (car_cube_budget)
 bool g_extra_cube = false;  // a car's own cube being drawn (src/game/hooks.cpp draws its every face)
 bool CarCubeFor(const gpu::State& s, uint32_t& cube);  // below
 bool InWaterReflection(const gpu::State& s);  // src/game/planar_water.cpp
@@ -434,6 +439,53 @@ CarCube g_cubes[kSlots];
 float GetF(uint32_t va) { float f; std::memcpy(&f, &kernel::G<uint32_t>(va), 4); return f; }
 void PutF(uint32_t va, float f) { std::memcpy(&kernel::G<uint32_t>(va), &f, 4); }
 
+// car_cube_budget: while frames run over budget the other cars' cubes rest, the farthest car from the followed one first, one
+// more each time frames stay slow; a resting cube is redrawn one frame in kRestEvery (its car's place is still kept each frame).
+// The followed car's reflection is the game's own cube pass and is never touched. Frames are timed in pairs as the water's
+// half rate does (planar_water.cpp KeepLastReflection): three slow pairs of the last four (5% past the frame's target, gaps over
+// 100 ms not counted) rest one more car, at most one more every kStepFrames. After kSettleFrames with no slow pairs one car comes
+// back, the nearest first; slow again soon after doubles the wait before the next return, up to kLongestSettle.
+constexpr uint32_t kRestEvery = 4, kStepFrames = 20, kSettleFrames = 120, kLongestSettle = 960;
+uint32_t CubesToRest(uint32_t others) {
+    using Clock = std::chrono::steady_clock;
+    constexpr double kOverBudget = 1.05, kNotAFrameMs = 100;
+    static Clock::time_point last;
+    static double last_ms = 0;
+    static uint32_t rested = 0, history = 0, frames = 0, since_step = 0, quiet = 0, settle = kSettleFrames, since_return = ~0u;
+    const auto now = Clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+    last = now;
+    if (!car_cube_budget) return rested = history = 0;
+    const app::Settings& set = app::Get();
+    const uint32_t fps = set.fps_cap ? std::min(set.fps_cap, race_fps) : race_fps;
+    bool slow_pair = false;
+    if (++frames % 2 == 0) {
+        slow_pair = fps && ms < kNotAFrameMs && last_ms < kNotAFrameMs && (ms + last_ms) / 2 > kOverBudget * 1000.0 / fps;
+        history = (history << 1 | uint32_t(slow_pair)) & 0xF;
+    }
+    last_ms = ms;
+    since_step++;
+    if (since_return != ~0u) since_return++;
+    const uint32_t was = rested;
+    if (uint32_t(__builtin_popcount(history)) >= 3) {
+        quiet = 0;
+        if (rested < others && since_step >= kStepFrames) {
+            // slow soon after a car came back: wait longer before the next one comes back
+            if (since_return < kSettleFrames) settle = std::min(settle * 2, kLongestSettle);
+            rested++, since_step = 0, history = 0;
+        }
+    } else if (!slow_pair && ++quiet >= settle && rested) {
+        rested--, quiet = 0, since_step = 0, since_return = 0;
+        if (!rested) settle = kSettleFrames;
+    }
+    if (rested > others) rested = others;
+    if (rested != was) {
+        static int told = 0;
+        if (told++ < 40) LOGR("pgr2: car cubes: %u of %u other cars' reflections resting (frames over budget)", rested, others);
+    }
+    return rested;
+}
+
 void DrawCarCubes(X86Context& ctx, uint32_t cam) {
     const uint32_t viewer = R32(cam + kCamViewer);
     const uint32_t followed = viewer && R32(viewer + kViewerMode) != kModeNoCar ? R32(viewer + kViewerCar) : 0;
@@ -445,12 +497,31 @@ void DrawCarCubes(X86Context& ctx, uint32_t cam) {
     static uint32_t turn = 0;
     turn++;
     const uint32_t every = std::clamp<uint32_t>(car_cube_every, 1, 8);
+    // the other cars by distance from the followed one, farthest first: the first `rest` of them rest
+    uint32_t order[kSlots], others = 0;
+    float dist[kSlots] = {};
+    for (uint32_t k = 0; k < count; k++) {
+        const uint32_t car = kCars + kCarFirst + k * kCarStride;
+        if (car == followed || !g_cubes[k].object || !R32(g_cubes[k].object + kCubeTexture)) continue;
+        float d2 = 0;
+        for (int i = 0; i < 3; i++) {
+            const float d = GetF(car + kCarAt + i * 4) - GetF(followed + kCarAt + i * 4);
+            d2 += d * d;
+        }
+        dist[k] = std::isfinite(d2) ? d2 : 1e30f;
+        order[others++] = k;
+    }
+    std::sort(order, order + others, [&](uint32_t a, uint32_t b) { return dist[a] > dist[b]; });
+    const uint32_t rest = CubesToRest(others);
+    g_cubes_rested.store(rest, std::memory_order_relaxed);
+    bool resting[kSlots] = {};
+    for (uint32_t i = 0; i < rest; i++) resting[order[i]] = true;
     for (uint32_t k = 0; k < count; k++) {
         CarCube& c = g_cubes[k];
         const uint32_t car = kCars + kCarFirst + k * kCarStride;
         if (car == followed || !c.object || !R32(c.object + kCubeTexture)) continue;
         for (int i = 0; i < 3; i++) c.at[i].store(R32(car + kCarAt + i * 4), std::memory_order_relaxed);
-        if ((k + turn) % every != 0) continue;
+        if ((k + turn) % (resting[k] ? std::max(every, kRestEvery) : every) != 0) continue;
         kernel::W32(cam + kCamCube, c.object);
         for (int i = 0; i < 3; i++) PutF(cam + kCamAt + i * 4, GetF(car + kCarAt + i * 4) + (i == 1 ? GetF(kCubeRaise) : 0.0f));
         g_cube_car = car;

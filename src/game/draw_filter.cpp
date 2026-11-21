@@ -17,8 +17,10 @@
 
 namespace pgr2 {
 extern bool dlc, cpu_car_shadows;  // src/common/game_info.cpp
+extern uint32_t raster_w_world;    // src/common/game_info.cpp
 extern std::atomic<uint32_t> g_shadow_mark;  // src/game/car_shadows.cpp
 extern bool g_extra_cube;                    // src/game/car_reflections.cpp
+extern std::atomic<uint32_t> g_cubes_rested;  // src/game/car_reflections.cpp
 bool InWaterReflection(const gpu::State& s);  // src/game/planar_water.cpp
 void WaterDraw(const gpu::State& s, gpu::DrawAdjust& adjust);          // src/game/planar_water.cpp
 void CarReflectionDraw(const gpu::State& s, gpu::DrawAdjust& adjust);  // src/game/car_reflections.cpp
@@ -180,11 +182,29 @@ void LabelPass(const gpu::State& s) {
     perf::SetPass(pass);
 }
 
+// raster_w_world: W-buffered draws take their depth from w at their vertices (gpu::DrawAdjust::raster_w) rather than the pixel
+// shader writing it, so early depth tests and hidden surface removal skip the pixels they hide. Between vertices the depth is
+// the chord, never nearer than the pixel's own w: long triangles near the camera come out slightly behind where they are, which
+// the reflections' small, bent faces do not show (1: the cube, the cars' cubes and the water). 2 adds the race view and its
+// mirror (experimental: the reason W is per pixel there was long road triangles reaching the camera). The backend leaves out draws
+// with a slope polygon offset (decals)
+void RasterW(const gpu::State& s, gpu::DrawAdjust& adjust) {
+    if (!pgr2::raster_w_world || s.rs[gpu::kRsZEnable] != 2) return;
+    bool on = pgr2::g_extra_cube || pgr2::InWaterReflection(s);
+    if (!on) {
+        const uint32_t cam = kernel::R32(0x3CD804);
+        const uint32_t kind = cam ? kernel::R32(cam + 0x40) : 99;
+        on = kind == 2 || (pgr2::raster_w_world >= 2 && kind <= 1);  // 2 the cube; 0 the race view, 1 its mirror
+    }
+    if (on) adjust.raster_w = true;
+}
+
 void Filter(const gpu::State& s, gpu::DrawAdjust& adjust) {
     LabelPass(s);
     g_one_shadow.Filter(s);
     pgr2::WaterDraw(s, adjust);
     if (adjust.skip) return;
+    RasterW(s, adjust);
     pgr2::CarReflectionDraw(s, adjust);
     pgr2::CarTraceDraw(s, adjust);
     if (g_trace_shadow) TraceShadow(s);
@@ -210,7 +230,7 @@ void InstallDrawFilter() {
     perf::SetKindNames({"world", "blended", "car", "water", "points", "2d"});                                             // Kind, in order
     perf::SetZoneNames({"game_view", "water_view", "cube_pass", "car_cubes", "flush", "queue_cars", "world_draw", "shadows", "night_pass", "street_light"});  // ZoneId, src/game/perf_zones.h
     // the city (the race's index), a replay (as the pause menu tells one), the view mode, the cars in the race
-    perf::SetState({"city", "replay", "view_mode", "cars", "street_shadows", "night_cars", "night_lights"}, []() -> std::vector<int64_t> {
+    perf::SetState({"city", "replay", "view_mode", "cars", "street_shadows", "night_cars", "night_lights", "cubes_rested"}, []() -> std::vector<int64_t> {
         uint32_t shadows = 0, cars = 0, lights = 0;
         pgr2::TakeNightShadowCounts(shadows, cars, lights);
         const int32_t mode = int32_t(kernel::R32(0x383190));
@@ -219,7 +239,7 @@ void InstallDrawFilter() {
         const uint32_t viewer = held >= 0x10000 && held < 0x4000000 ? held : 0;
         return {int32_t(kernel::R32(0x38317C)), mode >= 0 && mode < 64 && (kernel::G<uint8_t>(0x34C2B0 + uint32_t(mode) * 0x4C) & 4) ? 1 : 0,
                 viewer ? int32_t(kernel::R32(viewer + 0x128)) : -1, int32_t(kernel::R32(0x297390 + 0x0C)), int64_t(shadows), int64_t(cars),
-                int64_t(lights)};
+                int64_t(lights), int64_t(pgr2::g_cubes_rested.load(std::memory_order_relaxed))};
     });
     const char* nearer = std::getenv("PGR2_SHADOW_NEARER");
     bool shadow = nearer && *nearer == '1';

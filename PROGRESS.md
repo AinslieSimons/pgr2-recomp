@@ -39,6 +39,29 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-20 - GPU savings: deferred clears, car cube budget, depth from vertices in reflections, MetalFX (Mac)
+From `.local/research/perf-analysis.md` (items 2 to 5).
+- SDK `metal.mm`, deferred clears: a whole-target clear waits and becomes the next draw's pass load action (a multisampled
+  twin is no longer written out cleared, resolved and loaded back). Anything else touching the target first makes the clear as
+  before. About 19 clears a frame folded in the demos. `XBE_NO_DEFER_CLEAR=1` off. Perf column `n_clears_folded`.
+- `car_cube_budget` (on; F1, `PGR2_CAR_CUBE_BUDGET`): while frames run over budget (the water's rule, slow pairs) the other
+  cars' cubes rest one at a time, the farthest from the followed car first, each then redrawn one frame in 4; cars come back
+  nearest first after 2 s without slow frames, longer if slow again soon. The followed car's reflection (the game's cube pass)
+  is never touched. Perf column `cubes_rested`; the log says each change.
+- `raster_w_world` (1; F1, `PGR2_RASTER_W`): the cube, the cars' cubes and the water take W depth from their vertices
+  (rt-optimise's `raster_w`), so hidden pixels are skipped; 2 adds the race view and mirror (experimental). Draws with a slope
+  polygon offset (decals) keep the per-pixel depth.
+- `scale_filter` 2 on the Mac (F1 Picture "Scaling filter": MetalFX): the frame enlarged by MetalFX's spatial scaler, then the
+  final pass at 1:1. The last two scalers kept (menus 4:3 and race).
+- Evidence (muted demos, render scale 1.667, MSAA 4x, traced reflections on, race_fps 60, warm cache, perf on; GPU mean / p95 ms,
+  frames over 18.5 ms): all off 10.68 / 15.41 / 2.2%, 10.73 / 15.47 / 1.9%; all on 9.85 / 14.66 / 1.4%, 10.07 / 14.86 / 1.4%.
+  Alone: deferred clears 10.02 and 9.96 (the separate clears' 0.3 ms gone, the passes now include them); depth from vertices
+  10.58 and 10.61 (water 0.8 to 0.52). Budget: 0.11 cars resting on average at this load. `raster_w_world` 2: main pass 3.2 to
+  3.0, GPU 9.87. MetalFX at 75%: GPU 9.83, against 8.83 bilinear at 75% (MetalFX itself about 1 ms at 2560x1600): no gain over
+  100% at this size, so it stays an option, off. Screenshots by eye: unchanged; MetalFX sharp.
+- Not checked: the user's own 2560x1600 render size (these runs are the snapshot's), night races, the post-race screens,
+  Windows (no change there: D3D code untouched). Not pushed.
+
 ### 2026-11-20 - rt-optimise merged into main (cheaper ray traced reflections)
 - Main repo: `rt-optimise` (2d466b8, 0cddfb1) merged. `hooks.cpp` `Same()` keeps main's fuller check (98e8b3c already tests
   `cam` and `cam + 0x38`); both branches' PROGRESS entries kept. SDK: 6a93042 merged into SDK main (59bfc7c), no conflicts.

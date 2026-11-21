@@ -15,8 +15,8 @@ extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3, smoke_physics
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
 extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
-extern bool reflection_every_frame, car_cubes;
-extern uint32_t car_cube_every, water_scale, water_far_detail, water_update;
+extern bool reflection_every_frame, car_cubes, car_cube_budget;
+extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, raster_w_world;
 extern bool water_area_cull;
 extern uint32_t baked_ao, smoke_duration, smoke_density, street_light_shadows, street_light_reach;
 void InstallBakedAo();  // src/game/baked_ao.cpp
@@ -72,6 +72,8 @@ void Init() {
     if (const char* e = std::getenv("PGR2_CUBE_ALL"); e) pgr2::reflection_every_frame = *e == '1';
     if (const char* e = std::getenv("PGR2_CAR_CUBES"); e) pgr2::car_cubes = *e == '1';
     if (const char* e = std::getenv("PGR2_CAR_CUBE_EVERY"); e) pgr2::car_cube_every = uint32_t(std::atoi(e));
+    if (const char* e = std::getenv("PGR2_CAR_CUBE_BUDGET"); e) pgr2::car_cube_budget = *e == '1';
+    if (const char* e = std::getenv("PGR2_RASTER_W"); e) pgr2::raster_w_world = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RANGE"); e) pgr2::traced_range = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_TRACED_RAY"); e) pgr2::traced_ray = uint32_t(std::atoi(e));
     if (const char* e = std::getenv("PGR2_BAKED_AO"); e) pgr2::baked_ao = uint32_t(std::atoi(e));
@@ -117,6 +119,8 @@ uint32_t smoke_density = 300;     // tyre smoke particles a wheel, percent of th
 bool smoke_physics = true;         // smoke stirred by the cars driving through it (src/game/smoke.cpp)
 bool smoke_lighting = true;        // smoke darker where it is made in shade (src/game/smoke.cpp)
 uint32_t car_cube_every = 1;      // each car's cube is redrawn one frame in this many (1: every frame)
+uint32_t raster_w_world = 1;      // W-buffered draws' depth from their vertices: 0 cars only, 1 also the reflections, 2 also the race view (src/game/draw_filter.cpp)
+bool car_cube_budget = true;      // while frames run over budget the farthest cars' cubes rest first (src/game/car_reflections.cpp)
 uint32_t traced_range = 400;      // ray tracing: cars within this many metres of the camera go into the scene
 uint32_t traced_ray = 60;         // ray tracing: the longest ray, metres
 bool full_textures = true;  // every streamed texture at its full size from the city load (src/game/full_textures.cpp)
@@ -178,6 +182,10 @@ const app::GameInfo app::kGame = {
                  "On by default: every other car gets a reflection cube of its own, drawn from where it is, rather than reading yours; may cost frame rate; from the next race."},
                 {"car_cube_every", nullptr, &pgr2::car_cube_every, "Each car's reflection redrawn one frame in",
                  "1 (every frame) by default, up to 8: a higher number costs less frame rate, the cars' reflections update less often; at once."},
+                {"raster_w_world", nullptr, &pgr2::raster_w_world, "Depth from vertices (0-2)",
+                 "1 by default: the reflections' scenery takes its depth from its vertices, so the GPU skips hidden pixels; 2 the race view too (experimental: surfaces just behind others may show through); 0 off; at once."},
+                {"car_cube_budget", &pgr2::car_cube_budget, nullptr, "Cars' reflections rest when slow",
+                 "On by default: while frames run over budget the other cars' reflections are redrawn less often, the farthest car first; yours never; at once."},
                 {"street_light_shadows", nullptr, &pgr2::street_light_shadows, "Street light shadows (0-1)",
                  "At night: 1 (default) the day's shadow map from each street lamp, the car's true shape, costs some frame rate; 0 as the console (hard edged); at once."},
                 {"street_light_reach", nullptr, &pgr2::street_light_reach, "Street light shadow reach (%)",
