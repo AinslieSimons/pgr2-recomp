@@ -198,6 +198,14 @@ Measured with `PGR2_LOD_PROBE=1` in a Florence street race (PROGRESS.md, 2026-11
   reading a colour target in stage 0 into another target becomes a full screen depth copy (MetalBackend::DepthCopy) and
   the draw itself is dropped: read such a texture in stage 1 or above (found drawing the light pool over the frame, a debug view since removed). A pretransformed vertex at z 0 sits on the near
   clip plane.
+- **[PGR2] The light pool is a screen space light buffer of the main view** (2026-11-17, logged): the pool camera (holder +0x10,
+  0x3B59D0, class 0x27B764; source camera +0xBEF0) has the main camera's view matrix (0x188220 at the pass's start and its vtable
+  +0x18 0x187E90 before the beams, both from the viewer) and its own projection (its aspect +0x38 the 4:3 it was made with: x 1.415 against the main view's 1.179
+  at 16:10, so the pool's light was spread sideways by 1.2; `mirror_pool.cpp` gives it its source view's aspect each pass), winding flag set (its texels run y down). The road reads it as material mode 8 (0x118D90) only while [0x3CD808] (the pool
+  camera) has the camera being drawn as its source, else mode 0x14; mode 8's setup maps the drawn camera's box onto the 256 texels
+  (0x187B00: c167-c170, u = 128 ndc + 128 for a 640 wide box) and binds [0x4863A0] (0xF6170). [0x4863A4] holds the address of the
+  depth surface's slot (0x4861BC), not the surface. Other cars' beams (0x1F1D0, lamp 0 or 1 lit, colour [0x28F940] white, 25 m) are
+  drawn every pass; the mirror (kind 1) had no pool until `src/game/mirror_pool.cpp`.
 - **[PGR2] Camera kinds** (`+0x40`): 0 main, 1 mirror, 2 reflection cube, 3 the camera of target `0x48639C` (0x180230, built by 0x1848D0), which stands at y -10000 until it follows the car and looks like the light pool's; the game has no planar reflection pass (2026-11-06, read from the code). Measured main: far 3000, object range
   x1, width 640, scale 1.06. Mirror: far 500, range x0.3, width 200, scale 1.13, view mode 4 only. Cube: far 30, range x0.1, 256 wide.
   The draw distance option does not change the mirror's far plane (0x291A08) or any object range.

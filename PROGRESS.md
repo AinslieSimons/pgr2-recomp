@@ -86,6 +86,69 @@ From `.local/research/perf-analysis.md` (items 2 to 5).
   `sys/prctl.h`); not run on Linux or Windows.
 - Next: confirm a run past 7 hours; ETHREADs could be freed when the last handle closes if a longer session ever needs it.
 
+### 2026-11-17 - night: the mirror's coronas reach as far as the main view's (branch claude/night-mirror-bbf691)
+
+- The user: mirror coronas cut off at a distance. 0x415B0 draws a lamp's corona only while its size (the view's box width x its
+  projection's x scale x the lamp's size / distance) is over 1.0 (0x41951); the mirror's box is 167 units wide at 16:10 (200 on the
+  console) against the main view's 640, so its coronas went out at about a third of the main view's distance.
+- The project's first `[[hook]]` (config/pgr2.toml, before 0x41951) calls `MirrorCoronaReach` in `src/common/mirror_coronas.cpp`
+  (host side: on Windows the game code DLL imports hooks from the executable): a mirror corona the main view would still draw is
+  kept at the least size that passes. `PGR2_MIRROR_CORONA_REACH=0` as the console, `=N` N times the main view's reach.
+- Evidence (the user's recording, bumper view, night): of 8,862 mirror coronas under the size test, 4,853 kept; no traps. In the
+  screenshots a far car's lamp is a faint dot either way: past the size test the corona is small and dim, so the change is best
+  judged in play. Not checked: Windows (the hook's export), the console's 4:3 frame.
+
+### 2026-11-17 - night: street light shadow maps in the mirror (branch claude/night-mirror-bbf691)
+
+- The user saw no shadow map shadows in the mirror. night_shadows.cpp drew each car's ground mesh with cull mode 0x900 (as the
+  map draw leaves it); the mirror's camera is mirrored (+0x14), for which the game culls with 0x901 (0x186A30), so every mesh
+  triangle was culled there. The mesh now takes 0x901 on a mirrored camera.
+- Evidence (the user's recording, bumper view, night, same read): a dark shadow on the lit road in front of the RX-7 in the mirror,
+  none before. The main view is not mirrored and keeps 0x900.
+
+### 2026-11-17 - night: the main view's light pool in the frame's shape (branch claude/night-mirror-bbf691)
+
+- The game's pool camera kept the 4:3 aspect it was made with (0x1848D0, in the menus); hooks.cpp's ultrawide code reshapes only
+  the views it sees set up. The road maps the pool with the main view's projection, so on a 16:10 frame the pool's light (street
+  light glows, the beams of the cars ahead, the dark outline a car leaves in them) lay 1.2 times too far from the screen's centre.
+  `src/game/mirror_pool.cpp`: each pass, the pool camera takes its source view's aspect (`PGR2_POOL_ASPECT=0` as before).
+- Evidence (the user's recording, bumper view, 16:10): pool projection x scale 1.415 against the main view's 1.179 before, 1.179
+  and 1.179 after ("light pool: projection x scale" in the log). Screenshots at eight moments: the road's light changes a little
+  where the pool lights it, nothing else; the replays are a frame apart at some reads, so no pixel comparison.
+- Not checked: 16:9 and ultrawide frames (same mechanism: the main view's aspect is the frame's), Windows.
+
+### 2026-11-17 - night: the mirror's road lit by its own light pool (branch claude/night-mirror-bbf691)
+
+- The road's night light is the light pool, a 256x256 screen space light buffer of the main view (0x180230: world, cars, street
+  light glows; each car's headlight beam into its alpha, 0x1F1D0 for the other cars, 25 m). The road reads it only as material
+  mode 8, which needs the pool camera [0x3CD808] to have the camera being drawn as its source (0x118E01): the mirror never did,
+  so its road had no street light glow and no beams of the cars behind, and their shadows lay on unlit road.
+- `src/game/mirror_pool.cpp`, setting `mirror_light_pool` (on; F1 "Mirror night lighting", Recomp > Detail "Mirror Night
+  Lighting"; `PGR2_MIRROR_POOL=0` off): before the mirror's view the pool pass runs again on a copy of the pool camera (its own
+  visibility tests: the game's run twice in a frame hung) with the mirror's viewer, aspect, view and place, into our own target;
+  while the mirror draws, the road's pool camera and texture are ours and the mirror maps as a full frame (0x187B00).
+- Evidence (the user's recording, bumper view, night, 16:10, MSAA 4x; same reads): the RX-7 behind lights the road ahead of it
+  in the mirror (before: dark); no stray light where no car is; the main view below the mirror the same. Cost over 3200 frames:
+  work 5.49 -> 5.69 ms mean, p95 7.22 -> 7.51; GPU 12.33 -> 12.42 ms; draws 4159 -> 4357; no traps.
+- Found: the game's pool camera keeps a 4:3 projection (x scale 1.415) while the main view on a 16:10 frame is drawn at 1.6
+  (1.179), so the main view's pool light (street light glows, beams) is spread sideways by 1.2 there (fixed in the entry above).
+- Not checked: Windows (guest-level change, no renderer code), the hood view, split screen, other cities, the smoke test.
+
+### 2026-11-17 - night: the rear view mirror's coronas on their lamps; its car shadows (branch claude/night-mirror-bbf691)
+
+- Coronas in the mirror sat off their lamps. The light pass 0x42CE0 places each corona through the camera's projection 0x15D70,
+  which maps to the box (+0x28 x, +0x30 width), not to the viewport; on a frame wider than the HUD's shape the mirror's viewport
+  is narrowed about the centre (hooks.cpp Fit), so its coronas spread sideways by frame / HUD shape (1.2 at 16:10). Fixed:
+  during the light pass a narrowed camera's box holds the narrowed viewport (`PGR2_MIRROR_CORONAS=0` as before).
+  Evidence: the user's recording (`mirror.pad`, bumper view, night, 16:10, MSAA 4x), same frame: the RX-7's lamps at x 535 and
+  690 of the mirror crop, coronas at 495 and 665 before, 535 and 688 after; the street lamp's corona on its lamp too. Main view
+  untouched (only narrowed cameras).
+- Car shadows in the mirror: the night pass runs for the mirror camera (kind 1, view mode 4) and asks for nearly as many
+  shadows there as in the main view (17,961 against 20,039 over the run). Drawn black (test), each shows as a patch on the road
+  in front of the following car, and with the depth test off it is the same; in the console's and the shadow map's shades the
+  same place is only a little darker. They are drawn; they barely show because they multiply a road the light pool does not
+  light there (only street lights near the followed car and its own beam are in the pool). Not changed; to discuss.
+
 ### 2026-11-17 - street light shadows: shadow maps only, cheaper; headlight shadows removed (branch headlight-shadows)
 
 - `street_light_shadows` is now 0 (as the console) or 1 (default, shadow maps; an old 3 still means on). Removed: modes 1 and 2

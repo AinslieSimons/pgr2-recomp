@@ -36,7 +36,7 @@ extern bool skip_intro, dlc, hide_hud;
 extern uint32_t race_fps;
 void RaiseFrameCap();
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
+extern bool mirror_light_pool, mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, baked_ao, street_light_shadows;
@@ -182,6 +182,9 @@ const std::vector<Row> kDetail = {
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(mirror_detail); },
      [](uint32_t i) { mirror_detail = i != 0; }},
+    {u"Mirror Night Lighting", u"At night the road in the mirror is lit by the street lights and the cars behind.", OnOff,
+     [] { return uint32_t(mirror_light_pool); },
+     [](uint32_t i) { mirror_light_pool = i != 0; }},
     {u"Tree Detail", u"Trees keep their leaves and full shape at any distance. May cost frame rate.",
      [] { return Choices{u"Console", u"Full"}; },
      [] { return uint32_t(tree_detail); },

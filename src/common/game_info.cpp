@@ -13,7 +13,7 @@ void InstallDrawFilter();  // src/game/draw_filter.cpp
 namespace pgr2 {
 extern bool skip_intro, hide_hud, dlc, cpu_car_shadows, menus_4x3, smoke_physics, smoke_lighting;
 extern uint32_t fov_percent, draw_distance_percent, car_detail;
-extern bool mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
+extern bool mirror_light_pool, mirror_detail, full_textures, tree_detail, planar_water, car_reflections, cars_in_reflections, traced_reflections;
 extern uint32_t reflection_far, reflection_range, traced_range, traced_ray;
 extern bool reflection_every_frame, car_cubes, car_cube_budget;
 extern uint32_t car_cube_every, water_scale, water_far_detail, water_update, raster_w_world;
@@ -100,6 +100,7 @@ uint32_t fov_percent = 100;  // the race cameras' field of view, percent of the 
 uint32_t draw_distance_percent = 100;  // how far the race cameras see, percent of the console's (src/game/hooks.cpp)
 uint32_t car_detail = 2;  // 0 the console's, 1 high, 2 highest (src/game/detail.cpp)
 bool mirror_detail = true;  // the mirror sees and draws as the main view does (src/game/detail.cpp)
+bool mirror_light_pool = true;  // at night the mirror's road lit from its own view (src/game/mirror_pool.cpp)
 bool tree_detail = true;  // trees at full detail at any distance (src/game/detail.cpp)
 bool planar_water = true;  // water reflects the world in its plane (src/game/planar_water.cpp)
 bool water_area_cull = true;  // the reflection draws only what the visible water can show
@@ -154,6 +155,8 @@ const app::GameInfo app::kGame = {
                  "0 the console's, 1 high, 2 highest (the default): how far other cars keep their full shape; at once."},
                 {"mirror_detail", &pgr2::mirror_detail, nullptr, "Full mirror detail",
                  "On by default: the mirror sees as far and draws as much as the main view; may cost frame rate on slower machines in the views with a mirror; at once."},
+                {"mirror_light_pool", &pgr2::mirror_light_pool, nullptr, "Mirror night lighting",
+                 "On by default: at night the road in the rear view mirror is lit by the street lights and the headlights of the cars behind, as the main view's road is (the console lights it from the main view); draws the night light pass a second time in the views with a mirror; at once."},
                 {"tree_detail", &pgr2::tree_detail, nullptr, "Full tree detail",
                  "On by default: trees keep all their leaves and their fullest shape at any distance; may cost frame rate where there are many; at once."},
                 {"planar_water", &pgr2::planar_water, nullptr, "Water reflections",
