@@ -39,6 +39,18 @@ Newest first. Each entry: date, what changed, what was learned, what's next.
 
 ## Log
 
+### 2026-11-20 - Mac: no App Nap, game threads on performance cores, drawing threads named (SDK)
+From `.local/research/cpu-architecture.md` step 1 (C1, C2, part of C13).
+- `mac/main.mm`: an NSProcessInfo activity (user initiated, latency critical, idle sleep allowed) for the whole run, so macOS
+  does not nap the game or coalesce its timers behind other windows.
+- Guest threads start with QoS user-interactive (`kernel/threads.cpp` Spawn); the render, prep and record threads set it and
+  are named (`render_thread.cpp`), so threads.csv and profilers show them.
+- `render_thread.cpp`: a draw to the same target as the one before skips the written-surfaces set insert.
+- Evidence: muted demos as the 2026-11-20 GPU runs, one run: plays to the end; threads.csv names render (6.1 ms a frame) and
+  render prep (2.2); game thread 5.0 ms against 6.0, frame p95 17.0 against 17.3 ms, slow frames 1.0% against 1.4%. Main
+  also gained the night-mirror merge since those runs, so not all of it is this change. Not measured: a run with the window
+  behind others (what the App Nap change is for).
+
 ### 2026-11-20 - MetalFX in the game's Scaling Filter row (Mac)
 - PGR2's own settings pages replace the SDK's in F1, so the SDK's MetalFX choice (overlay.cpp's Graphics page) never
   showed. settings_entry.cpp's Scaling Filter row now offers Bilinear, Sharp and MetalFX on the Mac (scale_filter 0-2;
